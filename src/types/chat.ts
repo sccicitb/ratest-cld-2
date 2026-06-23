@@ -14,6 +14,11 @@ export interface Attachment {
   fileSize: number;
   url: string;
   thumbnailUrl?: string;
+  /**
+   * True when the file was too big to inline and was ingested session-scoped
+   * (retrieved via the search tool) rather than placed directly in context.
+   */
+  ingested?: boolean;
 }
 
 export interface Message {
@@ -37,6 +42,13 @@ export interface StepEvent {
   type: "step";
   step: PipelineStep;
   status: StepStatus;
+  /**
+   * Unique id for steps that can occur multiple times in one turn (e.g. an
+   * agentic model calling `search_knowledge_base` more than once). The same id
+   * is reused for the matching `active`/`complete` pair. Omitted for the
+   * single-occurrence pipeline steps, which are keyed by `step`.
+   */
+  id?: string;
   toolName?: string;
   toolArgs?: Record<string, unknown>;
 }

@@ -6,11 +6,13 @@ import { Database, Loader2 } from "lucide-react";
 
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { StepTracker } from "@/components/chat/StepTracker";
-import { InputBar } from "@/components/chat/InputBar";
+import { InputBar, type IngestFile } from "@/components/chat/InputBar";
 import { SourcesDrawer } from "@/components/chat/SourcesDrawer";
+import { ChunkingProgress } from "@/components/chat/ChunkingProgress";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useStreamChat } from "@/hooks/useStreamChat";
+import { useSessionIngestion } from "@/hooks/useSessionIngestion";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { useMessages, useSession } from "@/lib/queries";
 import type { Attachment } from "@/types/chat";
@@ -21,10 +23,11 @@ export default function ChatRoute() {
   const { data: messages, isLoading } = useMessages(sessionId);
   const { sendMessage, isStreaming, steps, streamedContent, reset, abort } =
     useStreamChat(sessionId);
+  const { ingest, tasks: ingestTasks } = useSessionIngestion(sessionId);
   const [sourcesOpen, setSourcesOpen] = useState(false);
 
   const { scrollRef, scrollToBottom } = useAutoScroll(
-    `${messages?.length}-${streamedContent.length}-${steps.length}`,
+    `${messages?.length}-${streamedContent.length}-${steps.length}-${ingestTasks.length}`,
   );
 
   // Reset transient streaming UI when switching sessions.
@@ -32,7 +35,14 @@ export default function ChatRoute() {
     reset();
   }, [sessionId, reset]);
 
-  const handleSend = (message: string, attachments: Attachment[]) => {
+  const handleSend = (
+    message: string,
+    attachments: Attachment[],
+    ingestFiles: IngestFile[],
+  ) => {
+    // Heavy attachments are ingested session-scoped (shown inline as chunking
+    // progress); the message itself streams concurrently.
+    if (ingestFiles.length > 0) void ingest(ingestFiles);
     void sendMessage(message, attachments);
     requestAnimationFrame(() => scrollToBottom());
   };
@@ -70,6 +80,16 @@ export default function ChatRoute() {
             <MessageBubble key={message.id} message={message} />
           ))}
 
+          {ingestTasks.map((task) => (
+            <ChunkingProgress
+              key={task.fileName}
+              fileName={task.fileName}
+              progress={task.progress}
+              chunkCount={task.chunkCount}
+              total={task.total}
+            />
+          ))}
+
           {isStreaming && steps.length > 0 && (
             <StepTracker steps={steps} active={isStreaming} />
           )}
@@ -101,7 +121,11 @@ export default function ChatRoute() {
         />
       </div>
 
-      <SourcesDrawer open={sourcesOpen} onOpenChange={setSourcesOpen} />
+      <SourcesDrawer
+        sessionId={sessionId}
+        open={sourcesOpen}
+        onOpenChange={setSourcesOpen}
+      />
     </div>
   );
 }

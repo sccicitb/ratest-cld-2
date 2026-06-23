@@ -2,7 +2,7 @@ import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { motion } from "framer-motion";
-import { FileText, Volume2, VolumeX } from "lucide-react";
+import { FileStack, FileText, Volume2, VolumeX } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -11,13 +11,27 @@ import { cn, formatFileSize } from "@/lib/utils";
 import type { Attachment, Message } from "@/types/chat";
 
 function AttachmentChip({ attachment }: { attachment: Attachment }) {
+  const Icon = attachment.ingested ? FileStack : FileText;
   return (
     <div className="flex items-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-sm">
-      <FileText className="size-4 shrink-0 text-brand-blue" />
+      <Icon
+        className={cn(
+          "size-4 shrink-0",
+          attachment.ingested
+            ? "text-amber-600 dark:text-amber-400"
+            : "text-brand-blue",
+        )}
+      />
       <span className="truncate font-medium">{attachment.fileName}</span>
-      <span className="shrink-0 text-xs text-muted-foreground">
-        {formatFileSize(attachment.fileSize)}
-      </span>
+      {attachment.ingested ? (
+        <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+          Indexed
+        </span>
+      ) : (
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {formatFileSize(attachment.fileSize)}
+        </span>
+      )}
     </div>
   );
 }

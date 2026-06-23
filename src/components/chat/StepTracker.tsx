@@ -77,9 +77,17 @@ export function StepTracker({
                   const meta = STEP_META[step.step];
                   const Icon = meta.icon;
                   const isActive = step.status === "active" && active;
+                  const query =
+                    typeof step.toolArgs?.query === "string"
+                      ? step.toolArgs.query
+                      : undefined;
+                  const scope =
+                    typeof step.toolArgs?.scope === "string"
+                      ? step.toolArgs.scope
+                      : undefined;
                   return (
                     <li
-                      key={step.step}
+                      key={step.id ?? step.step}
                       className="flex items-start gap-2.5 text-sm"
                     >
                       <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center">
@@ -106,6 +114,16 @@ export function StepTracker({
                           <code className="ml-1.5 rounded bg-muted px-1.5 py-0.5 text-xs text-foreground">
                             {step.toolName}
                           </code>
+                        )}
+                        {query && (
+                          <span className="ml-1.5 truncate text-xs text-muted-foreground">
+                            “{query}”
+                          </span>
+                        )}
+                        {scope && (
+                          <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                            scope: {scope}
+                          </span>
                         )}
                       </div>
                     </li>

@@ -289,8 +289,14 @@ const mockMessages = new Map<string, Message[]>(
 );
 let mockKBFiles: KnowledgeBaseFile[] = seedKBFiles.map((f) => ({
   ...f,
+  scope: "kb" as const,
   tags: [...f.tags],
 }));
+
+// Files ingested from chat attachments that were too big to inline. Keyed by
+// session id — these are scoped to one conversation and never appear on the
+// global Knowledge Base page.
+const mockSessionFiles = new Map<string, KnowledgeBaseFile[]>();
 
 // ------------------------------------------------------------------ //
 // Auth                                                                //
@@ -396,6 +402,30 @@ export function generateMockResponse(userMessage: string): string {
   return hit ? hit.body : DEFAULT_RESPONSE;
 }
 
+/**
+ * Mimics an agentic model deciding whether — and how often — to search the
+ * knowledge base. Trivial messages skip retrieval entirely; complex / compound
+ * questions trigger a second refined search. Each returned string is one
+ * `search_knowledge_base` tool call.
+ */
+function planSearches(message: string): string[] {
+  const m = message.trim().toLowerCase();
+  if (
+    m.length < 8 ||
+    /^(hi|hey|hello|thanks|thank you|ok|okay|cool|nice|yes|no|sup)\b/.test(m)
+  ) {
+    return [];
+  }
+  const queries = [message.slice(0, 60)];
+  if (
+    message.length > 80 ||
+    /\b(compare|versus|vs|difference|differences|both|and|then|also)\b/.test(m)
+  ) {
+    queries.push(`${message.slice(0, 36)} — follow-up details`);
+  }
+  return queries;
+}
+
 export async function* mockStreamChat(
   sessionId: string,
   message: string,
@@ -424,24 +454,43 @@ export async function* mockStreamChat(
   }
   session.updatedAt = new Date().toISOString();
 
-  // Pipeline: thinking -> retrieving -> calling_tool -> generating
+  // Agentic pipeline: the model thinks, then *decides* how many knowledge-base
+  // searches to run (zero for trivial messages, more for compound questions),
+  // then generates. Each tool call is its own active/complete pair with a
+  // unique id so the UI can show them as distinct steps.
   yield { type: "step", step: "thinking", status: "active" };
   await delay(800);
   yield { type: "step", step: "thinking", status: "complete" };
 
-  yield { type: "step", step: "retrieving_context", status: "active" };
-  await delay(1200);
-  yield { type: "step", step: "retrieving_context", status: "complete" };
+  // The retrieval tool is scoped server-side: if this conversation has
+  // session-ingested files, the search spans "this chat + KB"; otherwise just
+  // the KB. Same tool either way — only the scope filter differs.
+  const hasSessionFiles =
+    (mockSessionFiles.get(sessionId) ?? []).length > 0;
+  const scope = hasSessionFiles ? "this chat + KB" : "KB";
 
-  yield {
-    type: "step",
-    step: "calling_tool",
-    status: "active",
-    toolName: "search_knowledge_base",
-    toolArgs: { query: message.slice(0, 60) },
-  };
-  await delay(1000);
-  yield { type: "step", step: "calling_tool", status: "complete" };
+  const searches = planSearches(message);
+  for (const [i, query] of searches.entries()) {
+    const toolId = `tool-${i}-${generateId().slice(0, 6)}`;
+    const toolArgs = { query, scope };
+    yield {
+      type: "step",
+      step: "calling_tool",
+      status: "active",
+      id: toolId,
+      toolName: "search_knowledge_base",
+      toolArgs,
+    };
+    await delay(900 + Math.random() * 300);
+    yield {
+      type: "step",
+      step: "calling_tool",
+      status: "complete",
+      id: toolId,
+      toolName: "search_knowledge_base",
+      toolArgs,
+    };
+  }
 
   yield { type: "step", step: "generating_response", status: "active" };
   await delay(300);
@@ -568,4 +617,74 @@ export async function* mockSimulateChunkProgress(
       total,
     };
   }
+}
+
+// ------------------------------------------------------------------ //
+// Session-scoped ingestion (heavy chat attachments)                   //
+// ------------------------------------------------------------------ //
+
+/**
+ * Ingests a chat attachment that was too big to inline. Streams chunk-progress
+ * events (the chat UI renders them inline), then registers the file as a
+ * SESSION-scoped source — retrievable in this conversation only, never added to
+ * the global Knowledge Base. Returns the created file via the final event's
+ * side effect on mock state.
+ */
+export async function* mockIngestChatFile(
+  sessionId: string,
+  file: { name: string; size: number },
+): AsyncGenerator<ChunkProgressEvent> {
+  const total = 30 + Math.floor(Math.random() * 140);
+  const steps = 8;
+  for (let i = 1; i <= steps; i++) {
+    await delay(280);
+    yield {
+      type: "chunk_progress",
+      fileName: file.name,
+      progress: (i / steps) * 100,
+      chunkCount: Math.round((i / steps) * total),
+      total,
+    };
+  }
+  const sessionFile: KnowledgeBaseFile = {
+    id: generateId(),
+    name: file.name,
+    size: file.size,
+    uploadDate: new Date().toISOString(),
+    chunkCount: total,
+    status: "ready",
+    tags: [],
+    scope: "session",
+  };
+  const list = mockSessionFiles.get(sessionId) ?? [];
+  list.unshift(sessionFile);
+  mockSessionFiles.set(sessionId, list);
+}
+
+export async function mockGetSessionFiles(
+  sessionId: string,
+): Promise<KnowledgeBaseFile[]> {
+  await delay(150);
+  return (mockSessionFiles.get(sessionId) ?? []).map((f) => ({
+    ...f,
+    tags: [...f.tags],
+  }));
+}
+
+/** Promote a session-scoped file into the persistent Knowledge Base. */
+export async function mockPromoteSessionFile(
+  sessionId: string,
+  fileId: string,
+): Promise<KnowledgeBaseFile> {
+  await delay(200);
+  const list = mockSessionFiles.get(sessionId) ?? [];
+  const file = list.find((f) => f.id === fileId);
+  if (!file) throw new MockError(404, "Session file not found");
+  mockSessionFiles.set(
+    sessionId,
+    list.filter((f) => f.id !== fileId),
+  );
+  const promoted: KnowledgeBaseFile = { ...file, scope: "kb" };
+  mockKBFiles = [promoted, ...mockKBFiles];
+  return { ...promoted, tags: [...promoted.tags] };
 }

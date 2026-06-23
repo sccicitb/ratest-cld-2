@@ -15,11 +15,20 @@ import {
 } from "@/components/chat/AttachmentPreview";
 import { useVoiceInput } from "@/hooks/useVoiceInput";
 import { generateId } from "@/lib/mock";
-import { cn, isValidFileType, SUPPORTED_FILE_TYPES } from "@/lib/utils";
+import { cn, routeChatAttachment, SUPPORTED_FILE_TYPES } from "@/lib/utils";
 import type { Attachment } from "@/types/chat";
 
+export interface IngestFile {
+  name: string;
+  size: number;
+}
+
 interface InputBarProps {
-  onSend: (message: string, attachments: Attachment[]) => void;
+  onSend: (
+    message: string,
+    attachments: Attachment[],
+    ingestFiles: IngestFile[],
+  ) => void;
   isStreaming: boolean;
   onAbort: () => void;
 }
@@ -52,28 +61,52 @@ export function InputBar({ onSend, isStreaming, onAbort }: InputBarProps) {
 
   const addFiles = (files: FileList | null) => {
     if (!files) return;
-    const next = Array.from(files).map((file) => ({
-      id: generateId(),
-      file,
-      valid: isValidFileType(file.name),
-    }));
+    const next = Array.from(files).map((file) => {
+      const decision = routeChatAttachment(file);
+      return {
+        id: generateId(),
+        file,
+        route: decision.route,
+        message:
+          decision.route === "ingest"
+            ? decision.note
+            : decision.route === "reject"
+              ? decision.reason
+              : undefined,
+      };
+    });
     setAttachments((prev) => [...prev, ...next]);
   };
 
   const handleSend = () => {
     const trimmed = text.trim();
-    const valid = attachments.filter((a) => a.valid);
-    if (!trimmed && valid.length === 0) return;
+    const inline = attachments.filter((a) => a.route === "inline");
+    const ingest = attachments.filter((a) => a.route === "ingest");
+    if (!trimmed && inline.length === 0 && ingest.length === 0) return;
     if (isStreaming) return;
 
-    const mapped: Attachment[] = valid.map((a) => ({
+    const inlineAttachments: Attachment[] = inline.map((a) => ({
       id: a.id,
       fileName: a.file.name,
       fileType: a.file.type || "application/octet-stream",
       fileSize: a.file.size,
       url: "#",
     }));
-    onSend(trimmed, mapped);
+    // Ingested files still appear in the message bubble (marked "Indexed"), so
+    // the attachment is visible even though it went to retrieval, not context.
+    const ingestAttachments: Attachment[] = ingest.map((a) => ({
+      id: a.id,
+      fileName: a.file.name,
+      fileType: a.file.type || "application/octet-stream",
+      fileSize: a.file.size,
+      url: "#",
+      ingested: true,
+    }));
+    const ingestFiles: IngestFile[] = ingest.map((a) => ({
+      name: a.file.name,
+      size: a.file.size,
+    }));
+    onSend(trimmed, [...inlineAttachments, ...ingestAttachments], ingestFiles);
     setText("");
     setAttachments([]);
     if (isRecording) stopRecording();
@@ -174,7 +207,10 @@ export function InputBar({ onSend, isStreaming, onAbort }: InputBarProps) {
               <Button
                 size="icon"
                 onClick={handleSend}
-                disabled={!text.trim() && attachments.every((a) => !a.valid)}
+                disabled={
+                  !text.trim() &&
+                  attachments.every((a) => a.route === "reject")
+                }
                 aria-label="Send message"
                 className="rounded-full"
               >

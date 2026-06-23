@@ -8,6 +8,15 @@ The frontend already exists and is fully functional against an in-memory mock.
 **The contract below is exactly what the frontend expects** — match it and the
 UI works unchanged except for the one integration file noted in §1.
 
+> **Architecture in one paragraph.** Retrieval from the knowledge base is an
+> **agentic tool call** (`search_knowledge_base`) the model decides to make —
+> not a hardcoded pipeline. Files reach the model two ways: small ones go
+> **inline** (straight into context); large ones are **ingested** into a vector
+> store and reached via the retrieval tool. There is one vector store with two
+> faces — a **write side** (ingestion: chunk → embed → store) and a **read
+> side** (the retrieval tool) — and a **scope** dimension separating the
+> persistent Knowledge Base (`kb`) from per-conversation files (`session`).
+
 ---
 
 ## 1. Frontend integration contract
@@ -15,21 +24,23 @@ UI works unchanged except for the one integration file noted in §1.
 The frontend talks to the backend through a single file:
 [`src/lib/api.ts`](../src/lib/api.ts). Every function there currently delegates
 to `mock.*`. To go live, replace each delegate with a `fetch` to the endpoints
-in §5. Nothing else in the app needs to change, with two specifics:
+below. Specifics:
 
-1. **Base URL** comes from `import.meta.env.VITE_API_BASE_URL`
-   (e.g. `http://localhost:8000/api`).
-2. **Auth token** is held in memory by the auth store
+1. **Base URL** — `import.meta.env.VITE_API_BASE_URL` (e.g.
+   `http://localhost:8000/api`).
+2. **Auth token** — held in memory by the auth store
    ([`src/lib/auth.ts`](../src/lib/auth.ts) → `getToken()`). Send it as
    `Authorization: Bearer <accessToken>` on every authenticated request.
-3. **Streaming** — `streamChat()` must return an
-   `AsyncGenerator<StreamEvent>`. It will fetch the SSE endpoint (§6) and yield
-   parsed `StreamEvent` objects. The event object shapes must match
-   [`src/types/chat.ts`](../src/types/chat.ts) verbatim.
+3. **Streaming** — `streamChat()` returns an `AsyncGenerator<StreamEvent>`. It
+   fetches the SSE endpoint (§7) and yields parsed `StreamEvent` objects whose
+   shapes match [`src/types/chat.ts`](../src/types/chat.ts) exactly.
+4. **New endpoints since the first draft** — session-scoped files
+   (`GET /sessions/:id/files`) and promote-to-KB
+   (`POST /sessions/:id/files/:fileId/promote`). The frontend calls these via
+   `getSessionFiles` / `promoteSessionFile` in `api.ts`.
 
-> The frontend never persists the token to `localStorage`; on a hard refresh the
-> user is unauthenticated and routed to `/login`. The backend does not need a
-> refresh-token flow for parity, though it may add one (see §9).
+On a hard refresh the user is unauthenticated (token is memory-only) and routed
+to `/login`; no refresh-token flow is required for parity.
 
 ---
 
@@ -37,18 +48,18 @@ in §5. Nothing else in the app needs to change, with two specifics:
 
 | Aspect | Rule |
 |---|---|
-| Base path | All routes are under `/api` (configurable). |
+| Base path | All routes under `/api`. |
 | Auth | `Authorization: Bearer <jwt>` on every route except `POST /auth/login`. |
-| Content type | `application/json` for requests/responses; SSE endpoints return `text/event-stream`; uploads use `multipart/form-data`. |
-| Timestamps | ISO-8601 UTC strings, e.g. `2026-06-21T09:30:00.000Z`. Field names: `createdAt`, `updatedAt`, `uploadDate`. |
-| IDs | Opaque strings (UUID v4 recommended). The frontend treats them as strings only. |
-| CORS | Allow the SPA origin; allow `Authorization`, `Content-Type`; expose nothing special. |
-| Casing | JSON keys are **camelCase** (the frontend types are camelCase). |
+| Content type | JSON for requests/responses; SSE endpoints return `text/event-stream`; uploads use `multipart/form-data`. |
+| Timestamps | ISO-8601 UTC strings (`createdAt`, `updatedAt`, `uploadDate`). |
+| IDs | Opaque strings (UUID v4 recommended). |
+| Casing | JSON keys are **camelCase** (frontend types are camelCase). |
+| CORS | Allow the SPA origin + `Authorization`, `Content-Type`. |
 
 ### Error format
 
-Non-2xx responses return JSON. The frontend's `ApiError`
-([`src/lib/api.ts`](../src/lib/api.ts)) carries `status`, `message`, `code`.
+Non-2xx responses return JSON; the frontend's `ApiError` carries `status`,
+`message`, `code`.
 
 ```json
 { "message": "Session not found", "code": "not_found" }
@@ -56,21 +67,20 @@ Non-2xx responses return JSON. The frontend's `ApiError`
 
 | Status | When |
 |---|---|
-| 400 | Validation error (bad body / params). |
+| 400 / 422 | Validation error. |
 | 401 | Missing/invalid/expired token. |
-| 403 | Authenticated but not allowed to touch the resource. |
+| 403 | Authenticated but not allowed. |
 | 404 | Resource does not exist (or not owned by the caller). |
-| 409 | Conflict (e.g. duplicate). |
+| 409 | Conflict. |
 | 413 | Upload exceeds max size. |
 | 415 | Unsupported file type. |
-| 422 | Semantic validation failure. |
 | 500 | Unexpected. |
 
 ---
 
 ## 3. Data models
 
-These mirror [`src/types/api.ts`](../src/types/api.ts),
+Mirror [`src/types/api.ts`](../src/types/api.ts),
 [`src/types/chat.ts`](../src/types/chat.ts), and
 [`src/types/kb.ts`](../src/types/kb.ts). **Do not rename or drop fields.**
 
@@ -83,18 +93,25 @@ These mirror [`src/types/api.ts`](../src/types/api.ts),
 | `avatarUrl` | string? | optional |
 
 ### AuthResponse
-| Field | Type |
-|---|---|
-| `accessToken` | string (JWT) |
-| `user` | User |
+`{ accessToken: string (JWT), user: User }`
 
 ### Session
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string | |
-| `title` | string | defaults to `"New Chat"` on creation |
-| `createdAt` | string (ISO) | |
-| `updatedAt` | string (ISO) | bumped on new message / rename |
+| `title` | string | defaults to `"New Chat"` |
+| `createdAt` / `updatedAt` | string (ISO) | `updatedAt` bumped on new message / rename |
+
+### Attachment
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | |
+| `fileName` | string | |
+| `fileType` | string | MIME |
+| `fileSize` | number | bytes |
+| `url` | string | served/downloadable URL |
+| `thumbnailUrl` | string? | optional |
+| `ingested` | boolean? | **true** = file was too big to inline and was ingested session-scoped (reached via the search tool); **false/absent** = inlined into context. Drives the "Indexed" badge in the message bubble. |
 
 ### Message
 | Field | Type | Notes |
@@ -103,400 +120,475 @@ These mirror [`src/types/api.ts`](../src/types/api.ts),
 | `sessionId` | string | |
 | `role` | `"user" \| "assistant" \| "system"` | |
 | `content` | string | Markdown for assistant messages |
-| `attachments` | Attachment[]? | present on user messages with files |
+| `attachments` | Attachment[]? | on user messages with files (both inline and ingested) |
 | `createdAt` | string (ISO) | |
-
-### Attachment
-| Field | Type | Notes |
-|---|---|---|
-| `id` | string | |
-| `fileName` | string | |
-| `fileType` | string | MIME type |
-| `fileSize` | number | bytes |
-| `url` | string | downloadable/served URL |
-| `thumbnailUrl` | string? | optional (images) |
 
 ### KnowledgeBaseFile
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string | |
-| `name` | string | original filename |
+| `name` | string | |
 | `size` | number | bytes |
 | `uploadDate` | string (ISO) | |
-| `chunkCount` | number | `0` while indexing/error, else count of indexed chunks |
+| `chunkCount` | number | `0` while indexing/error |
 | `status` | `"indexing" \| "ready" \| "error"` | |
 | `tags` | string[] | lowercase, de-duplicated |
+| `scope` | `"kb" \| "session"`? | **`kb`** (default) = persistent, shown on KB page, retrievable everywhere. **`session`** = ingested from a chat attachment; retrievable in that conversation only, never on the KB page. |
 
----
-
-## 4. Authentication endpoints
-
-### `POST /api/auth/login`
-Mock ref: `mockLogin` (accepts any credentials, 500 ms).
-
-- **Body:** `{ "email": string, "password": string }`
-- **200:** `AuthResponse`
-- **401:** invalid credentials (real backend; the demo seed user should still log in — see §12).
-
-Real behavior: verify email + password hash, issue a signed JWT
-(`sub = user.id`, reasonable expiry, e.g. 24h).
-
-### `GET /api/auth/me`
-Mock ref: `mockGetMe` (200 ms; 401 on bad token).
-
-- **200:** `User`
-- **401:** missing/invalid/expired token.
-
-### `POST /api/auth/logout`
-Mock ref: `mockLogout` (200 ms, no-op).
-
-- **200:** empty body. Stateless JWT → server-side no-op is acceptable; if using
-  a denylist, revoke here.
-
----
-
-## 5. Sessions & messages endpoints
-
-All require auth and are **scoped to the authenticated user** (return 404 for
-other users' sessions, never 403-leak existence).
-
-### `GET /api/sessions`
-Mock ref: `mockGetSessions` (400 ms). Sorted by `updatedAt` **descending**.
-- **200:** `Session[]`
-
-### `GET /api/sessions/:id`
-Mock ref: `mockGetSession` (200 ms).
-- **200:** `Session` · **404:** unknown id.
-
-### `POST /api/sessions`
-Mock ref: `mockCreateSession` (300 ms). Creates an empty session titled
-`"New Chat"` with no messages.
-- **201/200:** `Session`
-
-### `PATCH /api/sessions/:id`
-Mock ref: `mockRenameSession` (200 ms). Updates the title; bumps `updatedAt`.
-- **Body:** `{ "title": string }`
-- **200:** `Session` · **404:** unknown id.
-
-### `DELETE /api/sessions/:id`
-Mock ref: `mockDeleteSession` (200 ms). Cascade-deletes its messages.
-- **204/200:** empty · **404:** unknown id.
-
-### `GET /api/sessions/:id/messages`
-Mock ref: `mockGetMessages` (300 ms). Chronological (oldest → newest).
-- **200:** `Message[]`
-
----
-
-## 6. Chat streaming (SSE)
-
-### `POST /api/sessions/:id/chat`
-Mock ref: `mockStreamChat`. This is the core endpoint. It is a **Server-Sent
-Events** stream.
-
-- **Request headers:** `Authorization`, `Accept: text/event-stream`.
-- **Request body** (`application/json`):
-  ```json
-  {
-    "message": "How does RAG work?",
-    "attachments": [
-      { "id": "att-1", "fileName": "report.pdf", "fileType": "application/pdf", "fileSize": 2340000, "url": "#" }
-    ]
-  }
-  ```
-  `attachments` is optional. (Alternatively accept `multipart/form-data` if you
-  want raw file bytes uploaded with the turn; the current frontend only sends
-  attachment metadata.)
-- **Response:** `Content-Type: text/event-stream`, one event per line block:
-  ```
-  data: {"type":"step","step":"thinking","status":"active"}
-
-  data: {"type":"token","content":"Based "}
-
-  ...
-  data: {"type":"done","messageId":"msg-abc"}
-  ```
-  Each `data:` line is a JSON-encoded `StreamEvent`. End the stream after `done`.
-
-#### Server-side side effects (must match mock)
-1. Persist the **user message** immediately (with attachments).
-2. If the session title is still `"New Chat"`, auto-title it from the first user
-   message (truncate to ~40 chars, append `…` if longer). Bump `updatedAt`.
-3. Run the pipeline (below), streaming events.
-4. Persist the **assistant message** with the full accumulated `content`.
-5. Bump session `updatedAt` again. Emit `done` with the assistant `messageId`.
-
-#### StreamEvent schema
-From [`src/types/chat.ts`](../src/types/chat.ts) — discriminated union on `type`:
-
+### StreamEvent (SSE discriminated union)
 ```ts
-// step
 { type: "step", step: PipelineStep, status: "active" | "complete",
-  toolName?: string, toolArgs?: Record<string, unknown> }
-// token (incremental text)
+  id?: string, toolName?: string, toolArgs?: Record<string, unknown> }
 { type: "token", content: string }
-// chunk_progress (used by ingestion stream, §7)
 { type: "chunk_progress", fileName: string, progress: number,
   chunkCount: number, total: number }
-// done
 { type: "done", messageId: string }
-// error
 { type: "error", message: string }
 
 type PipelineStep =
   | "thinking" | "retrieving_context" | "calling_tool" | "generating_response";
 ```
 
-#### Pipeline sequence (what to emit, and what it means in a real system)
-The mock uses fixed delays; the real backend emits the **same events** driven by
-real work. Emit `status:"active"` when a stage starts and `status:"complete"`
-when it finishes.
+`StepEvent.id` keys steps that occur **more than once per turn** (e.g. several
+`calling_tool` invocations). Reuse the same `id` for a step's matching
+`active`/`complete` pair. Single-occurrence steps (`thinking`,
+`generating_response`) may omit `id` — the UI keys them by `step`.
 
-| Order | Event | Real meaning |
+---
+
+## 4. Authentication endpoints
+
+### `POST /api/auth/login`
+Mock: `mockLogin` (accepts any credentials, 500 ms). Verify email + password
+hash, issue a signed JWT (`sub = user.id`, ~24h expiry).
+- **200:** `AuthResponse` · **401:** invalid credentials.
+
+### `GET /api/auth/me`
+Mock: `mockGetMe`. Validate the bearer token.
+- **200:** `User` · **401:** missing/invalid/expired.
+
+### `POST /api/auth/logout`
+Mock: `mockLogout`. Stateless JWT → server-side no-op is fine.
+- **200:** empty.
+
+---
+
+## 5. Sessions & messages endpoints
+
+All require auth and are **scoped to the authenticated user** (return 404 for
+other users' sessions — never leak existence).
+
+| Method · Path | Mock | Behavior |
 |---|---|---|
-| 1 | `step thinking active` → `complete` | Query understanding / planning (LLM or router). |
-| 2 | `step retrieving_context active` → `complete` | Embed the query, similarity-search the vector store for top-k chunks. |
-| 3 | `step calling_tool active` (`toolName:"search_knowledge_base"`, `toolArgs:{query}`) → `complete` | Any tool/function call. The mock always emits the KB search tool; real backends emit per actual tool invocations (0..n). |
-| 4 | `step generating_response active` | LLM generation begins. |
-| 5 | repeated `token` events | Stream the LLM's tokens/words as they arrive. The mock emits word-by-word (~30–50 ms); real backends forward provider tokens. |
-| 6 | `step generating_response complete` | Generation finished. |
-| 7 | `done` | Final; includes persisted `messageId`. |
-
-On failure mid-stream, emit `{ "type": "error", "message": "<safe message>" }`
-and close the stream (after persisting whatever is appropriate).
-
-> Reference response content: the mock keys off keywords (`rag|embedding`,
-> `python|async|code`, `report|finance`) to pick a templated Markdown answer,
-> else a default. The real backend produces this from retrieval + the LLM; no
-> need to replicate the templates.
+| `GET /api/sessions` | `mockGetSessions` | `Session[]`, sorted by `updatedAt` **desc** |
+| `GET /api/sessions/:id` | `mockGetSession` | `Session` · 404 |
+| `POST /api/sessions` | `mockCreateSession` | new empty session titled `"New Chat"` |
+| `PATCH /api/sessions/:id` | `mockRenameSession` | body `{ title }`; bumps `updatedAt` |
+| `DELETE /api/sessions/:id` | `mockDeleteSession` | cascade-deletes messages **and session-scoped files/chunks** |
+| `GET /api/sessions/:id/messages` | `mockGetMessages` | `Message[]`, chronological |
 
 ---
 
-## 7. Knowledge base endpoints
+## 6. Content ingress — how files reach the model
 
-### `GET /api/knowledge-base`
-Mock ref: `mockGetKBFiles` (400 ms). Sorted by `uploadDate` **descending**.
-Supports optional query params (all combine with AND):
+This is the decision that shapes the whole system. There are **two paths** for
+getting content in front of the model, chosen by **token cost**, not file type
+or megabytes:
 
-| Param | Effect |
+| Path | For | Mechanism |
+|---|---|---|
+| **Inline** | small files | parse → put the whole thing in the prompt (text, or image/PDF as a native vision/document block) |
+| **Retrieval** | large files | chunk → embed → store → model pulls relevant pieces via the `search_knowledge_base` tool |
+
+### The routing rule is token-based, not byte-based
+
+**Bytes ≠ tokens.** An image-heavy 30 MB PDF can be only a few thousand tokens
+(thin text layer) — or hundreds of thousands (if every page is rendered for
+vision). So the authoritative inline-vs-ingest decision is made **server-side,
+after extraction, on the resulting token count**:
+
+```
+extract/parse the file  →  count tokens  →
+    tokens ≤ INLINE_TOKEN_BUDGET   → inline
+    tokens >  INLINE_TOKEN_BUDGET   → ingest (session-scoped, §8)
+```
+
+`INLINE_TOKEN_BUDGET` is configurable (a few thousand to ~tens of thousands of
+tokens). The frontend cannot count tokens, so its byte thresholds
+([`utils.ts`](../src/lib/utils.ts): `routeChatAttachment`) are only a **crude
+proxy + sanity ceiling** — never the source of truth. The backend re-decides.
+
+### Image-bearing PDFs (important)
+
+When a PDF's meaning lives in its **images** (scans, diagrams, tables-as-images
+— "content-bearing"), text extraction alone silently drops the content. Detect
+low-text / image-heavy PDFs and route them to the **multimodal ingestion
+branch** (§8.1): render pages → embed page images (or OCR) → retrieve. Do **not**
+inline a large content-bearing PDF as raw vision — page-images cost ~1.5k–4.8k
+tokens *each*, which blows context and cost for anything beyond a few pages.
+
+### Three outcomes the composer produces (frontend → backend)
+
+| Outcome | Frontend signal | Backend action |
+|---|---|---|
+| **inline** | attachment in the message `attachments[]`, `ingested` absent/false | parse → include in the model's context for that turn |
+| **ingest** | attachment in `attachments[]` with `ingested: true`, **and** the file is uploaded for session-scoped ingestion | run the ingestion pipeline scoped to the session (§8) |
+| **reject** | not sent | n/a (frontend blocks unsupported types / past the hard ceiling) |
+
+> The model never "ingests." Ingestion is event-driven (an upload), not a tool
+> the model calls. Only **retrieval** is a tool.
+
+---
+
+## 7. Chat streaming (SSE) — agentic tool-calling RAG
+
+### `POST /api/sessions/:id/chat`
+Mock: `mockStreamChat`. A **Server-Sent Events** stream that runs the model's
+**tool-use loop** and emits `StreamEvent`s.
+
+- **Request headers:** `Authorization`, `Accept: text/event-stream`.
+- **Body** (`application/json`):
+  ```json
+  {
+    "message": "How does our pricing compare to last quarter?",
+    "attachments": [
+      { "id": "att-1", "fileName": "q2.pdf", "fileType": "application/pdf",
+        "fileSize": 240000, "url": "#", "ingested": false }
+    ]
+  }
+  ```
+  Inline attachments are placed into the model's context for this turn. Ingested
+  attachments (`ingested: true`) are *not* inlined — they're retrieved via the
+  tool (their bytes were uploaded separately for ingestion, §8).
+- **Response:** `text/event-stream`, one JSON `StreamEvent` per `data:` line,
+  blank line between events, stream closed after `done`:
+  ```
+  data: {"type":"step","step":"thinking","status":"active"}
+
+  data: {"type":"token","content":"Based "}
+
+  data: {"type":"done","messageId":"msg_abc"}
+  ```
+
+### The retrieval tool
+
+Define one tool and let the model decide when to call it:
+
+```json
+{
+  "name": "search_knowledge_base",
+  "description": "Search the user's indexed documents. Call this whenever the answer may depend on the user's files, recent data, or anything not already in the conversation. May be called multiple times with refined queries.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string", "description": "Semantic search query" },
+      "tags":  { "type": "array", "items": { "type": "string" } }
+    },
+    "required": ["query"]
+  }
+}
+```
+
+**Scope is injected server-side, not by the model.** When the model calls the
+tool, the backend runs the search filtered to this user's `kb` files **plus**
+this conversation's `session` files:
+
+```sql
+SELECT content, file_id, chunk_idx
+FROM kb_chunks c JOIN kb_files f ON f.id = c.file_id
+WHERE f.user_id = :user
+  AND f.status = 'ready'
+  AND (f.scope = 'kb' OR (f.scope = 'session' AND f.session_id = :session))
+ORDER BY c.embedding <=> :query_embedding
+LIMIT :k;
+```
+
+The model never sees a session id. (Optional future nicety: expose a
+`scope: "all" | "kb" | "session"` hint on the tool so the model can deliberately
+narrow to "the file I just uploaded"; default `"all"`. Not required for parity.)
+
+### Pipeline → event mapping
+
+Run the standard tool-use loop (SDK tool runner or a manual loop). Emit events as
+the loop progresses — the number of `calling_tool` events is **dynamic** (0..n):
+
+| Loop event | SSE event(s) |
 |---|---|
-| `search` | case-insensitive substring match on `name` |
-| `status` | exact match on `status` (`ready` / `indexing` / `error`) |
-| `tag` | files containing this tag |
+| Planning / query understanding begins → ends | `step thinking active` → `complete` |
+| Model returns a `search_knowledge_base` tool call | `step calling_tool active` with a **unique `id`**, `toolName: "search_knowledge_base"`, `toolArgs: { query, scope }` |
+| You run the vector search for that call | (optionally) `step retrieving_context active` → `complete` |
+| You return the tool result; that call resolves | `step calling_tool complete` (same `id`) |
+| Model generates the answer | `step generating_response active`, then `token` per delta, then `complete` |
+| Loop ends (`end_turn`) | `done` with the persisted assistant `messageId` |
 
-- **200:** `KnowledgeBaseFile[]`
+A trivial message (e.g. "thanks") may produce **zero** tool calls — emit only
+`thinking` → `generating_response` → `done`. A compound question may produce
+**several** `calling_tool` pairs, each with its own `id`.
 
-### `POST /api/knowledge-base/upload`
-Mock ref: `mockUploadKBFile`. Accepts a file, stores it, kicks off ingestion.
+### Server-side side effects (must match the mock)
+1. Persist the **user message** immediately (with its attachments, inline +
+   ingested).
+2. If the session title is still `"New Chat"`, auto-title from the first user
+   message (truncate ~40 chars). Bump `updatedAt`.
+3. Run the tool loop, streaming events.
+4. Persist the **assistant message** with the full accumulated `content`; bump
+   `updatedAt`.
+5. Emit `done` with the assistant `messageId`.
 
-- **Request:** `multipart/form-data` with a `file` field.
-- **Validation:** reject unsupported extensions (415) and oversize (413).
-  Supported types mirror `SUPPORTED_FILE_TYPES`
-  ([`src/lib/utils.ts`](../src/lib/utils.ts)):
-  `.pdf .md .txt .docx .doc .csv .json .png .jpg .jpeg`.
-- **Behavior:** create the record with `status:"indexing"`, `chunkCount:0`, then
-  run the ingestion pipeline (§7.1). Return once the record exists.
-- **200/201:** `KnowledgeBaseFile`
-
-Progress reporting: the mock simulates 0→100% upload then an indexing phase. For
-a real backend you have two valid options:
-- **Simple (matches current frontend):** return the file record; the frontend
-  polls `GET /knowledge-base` (already invalidated by TanStack Query) and the
-  status flips `indexing → ready` when ingestion completes.
-- **Streaming (optional):** expose an ingestion SSE (below) and wire it into the
-  upload UI. The event type already exists (`chunk_progress`).
-
-### `POST /api/knowledge-base/:id/reindex`
-Mock ref: `mockReindexKBFile` (200 ms, then ready after ~2 s). Sets
-`status:"indexing"`, `chunkCount:0`, re-runs ingestion; on completion sets
-`status:"ready"` with the new chunk count.
-- **200:** `KnowledgeBaseFile` (immediately, in `indexing` state) · **404**.
-
-### `PATCH /api/knowledge-base/:id/tags`
-Mock ref: `mockUpdateFileTags` (200 ms). Replaces the tag set.
-- **Body:** `{ "tags": string[] }` (lowercase + de-dupe server-side)
-- **200:** `KnowledgeBaseFile` · **404**.
-
-### `DELETE /api/knowledge-base/:id`
-Mock ref: `mockDeleteKBFile` (200 ms). Deletes the file, its stored blob, and
-its vector chunks.
-- **204/200:** empty · **404**.
-
-### `GET /api/knowledge-base/:id/ingest` (optional SSE)
-Mock ref: `mockSimulateChunkProgress`. Streams `chunk_progress` events while a
-file is being chunked + embedded:
-```
-data: {"type":"chunk_progress","fileName":"x.pdf","progress":40,"chunkCount":18,"total":45}
-```
-`progress` is 0–100; emit a terminal event at `progress:100` then close.
-
-### 7.1 Ingestion pipeline (behind upload/reindex)
-1. Extract text (PDF/DOCX/TXT/MD/CSV/JSON; OCR or caption images if desired).
-2. Chunk (e.g. ~500–1000 tokens, overlap ~10–15%).
-3. Embed each chunk with a fixed embedding model (**use the same model for
-   indexing and querying**).
-4. Upsert vectors + metadata (file id, chunk index, text, tags) into the vector
-   store.
-5. Update the file record: `status:"ready"`, `chunkCount = <#chunks>`. On
-   failure: `status:"error"`, `chunkCount:0`.
+On failure mid-stream emit `{ "type": "error", "message": "<safe>" }` and close
+(don't throw an HTTP error after streaming has started). Disable proxy buffering
+so events flush immediately; send SSE keep-alive comments on long gaps. On client
+disconnect, cancel the model call.
 
 ---
 
-## 8. Persistence schema (reference: PostgreSQL + pgvector)
+## 8. Knowledge base, ingestion & retrieval
+
+### 8.0 One store, two faces — and not (necessarily) a separate service
+
+There is **one vector store**. It has a **write side** (ingestion) and a **read
+side** (the retrieval tool); they meet at the store.
+
+```
+WRITE (ingestion, event-driven)        READ (model-driven)
+upload → parse → chunk → embed         search_knowledge_base tool
+        ↓                                       ↑
+              [ vector store + kb_files ] ───────┘
+```
+
+Ingestion does **not** need to be its own service. Start with a **background
+worker** (queue + worker in the same app): the upload endpoint returns
+immediately with `status: "indexing"`, the worker does the heavy parsing/
+embedding, then flips the file to `ready`. (The UI already expects this — the
+`indexing → ready` badge *is* this contract.) Split ingestion into a dedicated
+service only when the work demands it (heavy OCR/embedding, GPU, bursty load,
+independent scaling). A capable GPU is an argument to route **more** to
+ingestion, not to inline bigger files — it speeds ingestion; it does nothing for
+the model's context window.
+
+### 8.1 Ingestion pipeline (write side)
+
+Triggered by KB upload, KB reindex, and session-scoped chat ingestion. Steps:
+
+1. **Extract** — per type: PDF (`pypdf`/`pdfplumber`), DOCX (`python-docx`),
+   TXT/MD/CSV/JSON directly.
+2. **Decide text vs multimodal** — for **content-bearing / image-heavy PDFs**
+   (low extractable text relative to page count), use the **multimodal branch**:
+   render each page to an image and embed the page images (and/or OCR), so the
+   visual content is actually captured. Otherwise use text extraction.
+3. **Chunk** — ~500–1000 tokens, ~10–15% overlap, split on structure.
+4. **Embed** — one fixed embedding model for **both** indexing and querying
+   (mismatch silently breaks retrieval); output dim must match the `vector(N)`
+   column. Multimodal pages use a multimodal embedder.
+5. **Store** — upsert chunks + metadata (file id, chunk index, text, tags,
+   **scope**, **session_id** when scoped).
+6. **Finalize** — `status: "ready"`, `chunkCount = <#chunks>`; on failure
+   `status: "error"`, `chunkCount: 0`.
+
+Optionally stream `chunk_progress` events during ingestion (the chat UI renders
+them inline; the type already exists). Reindex re-runs this pipeline.
+
+### 8.2 Scopes
+
+- **`kb`** — uploaded via the Knowledge Base page; persistent; on the KB page;
+  retrievable from every chat.
+- **`session`** — ingested from a chat attachment too big to inline; retrievable
+  **only** in that conversation; **not** on the KB page; deleted with the
+  session (or by TTL). A chat attachment's *origin* sets this scope — it inherits
+  `session` by default; the user may **promote** it to `kb`.
+
+### 8.3 Knowledge Base endpoints (scope `kb`)
+
+| Method · Path | Mock | Behavior |
+|---|---|---|
+| `GET /api/knowledge-base` | `mockGetKBFiles` | `KnowledgeBaseFile[]` (scope `kb` only), sorted by `uploadDate` **desc**; filters `search` / `status` / `tag` (AND) |
+| `POST /api/knowledge-base/upload` | `mockUploadKBFile` | `multipart/form-data` (`file`); validate type (415) + size (413); create `indexing` record; run §8.1; returns the file |
+| `POST /api/knowledge-base/:id/reindex` | `mockReindexKBFile` | set `indexing`, re-run §8.1, back to `ready` with new `chunkCount` |
+| `PATCH /api/knowledge-base/:id/tags` | `mockUpdateFileTags` | body `{ tags }` (lowercase + de-dupe) |
+| `DELETE /api/knowledge-base/:id` | `mockDeleteKBFile` | delete file, blob, and chunks |
+
+Supported types mirror `SUPPORTED_FILE_TYPES`
+([`utils.ts`](../src/lib/utils.ts)): `.pdf .md .txt .docx .doc .csv .json .png
+.jpg .jpeg`.
+
+### 8.4 Session-scoped file endpoints (scope `session`)
+
+| Method · Path | Mock | Behavior |
+|---|---|---|
+| ingestion | `mockIngestChatFile` | invoked when the chat composer sends an `ingest`-routed attachment: run §8.1 with `scope = session`, `session_id = :id`. Optionally stream `chunk_progress`. |
+| `GET /api/sessions/:id/files` | `mockGetSessionFiles` | `KnowledgeBaseFile[]` for this session (scope `session`); powers the **"This chat's files"** section of the Sources drawer |
+| `POST /api/sessions/:id/files/:fileId/promote` | `mockPromoteSessionFile` | flip a session file to `scope = kb` (the "Save to Knowledge Base" action); returns the promoted `KnowledgeBaseFile` |
+
+> The frontend currently has the promote endpoint wired in the data layer but no
+> UI button yet — implement the endpoint regardless.
+
+---
+
+## 9. Persistence schema (reference: PostgreSQL + pgvector)
 
 ```sql
 create extension if not exists vector;
 
 create table users (
-  id            uuid primary key default gen_random_uuid(),
-  email         text unique not null,
-  display_name  text not null,
-  avatar_url    text,
+  id uuid primary key default gen_random_uuid(),
+  email text unique not null,
+  display_name text not null,
+  avatar_url text,
   password_hash text not null,
-  created_at    timestamptz not null default now()
+  created_at timestamptz not null default now()
 );
 
 create table sessions (
-  id         uuid primary key default gen_random_uuid(),
-  user_id    uuid not null references users(id) on delete cascade,
-  title      text not null default 'New Chat',
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  title text not null default 'New Chat',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create index on sessions (user_id, updated_at desc);
 
 create table messages (
-  id         uuid primary key default gen_random_uuid(),
+  id uuid primary key default gen_random_uuid(),
   session_id uuid not null references sessions(id) on delete cascade,
-  role       text not null check (role in ('user','assistant','system')),
-  content    text not null,
+  role text not null check (role in ('user','assistant','system')),
+  content text not null,
   created_at timestamptz not null default now()
 );
 create index on messages (session_id, created_at);
 
 create table attachments (
-  id            uuid primary key default gen_random_uuid(),
-  message_id    uuid not null references messages(id) on delete cascade,
-  file_name     text not null,
-  file_type     text not null,
-  file_size     bigint not null,
-  url           text not null,
-  thumbnail_url text
+  id uuid primary key default gen_random_uuid(),
+  message_id uuid not null references messages(id) on delete cascade,
+  file_name text not null,
+  file_type text not null,
+  file_size bigint not null,
+  url text not null,
+  thumbnail_url text,
+  ingested boolean not null default false
 );
 
 create table kb_files (
-  id          uuid primary key default gen_random_uuid(),
-  user_id     uuid not null references users(id) on delete cascade,
-  name        text not null,
-  size        bigint not null,
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  scope text not null default 'kb' check (scope in ('kb','session')),
+  session_id uuid references sessions(id) on delete cascade,   -- set when scope='session'
+  name text not null,
+  size bigint not null,
   upload_date timestamptz not null default now(),
   chunk_count int not null default 0,
-  status      text not null check (status in ('indexing','ready','error')),
-  tags        text[] not null default '{}',
-  storage_key text not null            -- pointer to the stored blob
+  status text not null check (status in ('indexing','ready','error')),
+  tags text[] not null default '{}',
+  storage_key text not null,
+  modality text not null default 'text' check (modality in ('text','multimodal'))
 );
-create index on kb_files (user_id, upload_date desc);
+create index on kb_files (user_id, scope, upload_date desc);
+create index on kb_files (session_id);
 
 create table kb_chunks (
-  id        uuid primary key default gen_random_uuid(),
-  file_id   uuid not null references kb_files(id) on delete cascade,
+  id uuid primary key default gen_random_uuid(),
+  file_id uuid not null references kb_files(id) on delete cascade,
   chunk_idx int not null,
-  content   text not null,
-  embedding vector(1536) not null      -- match your embedding model dims
+  content text not null,
+  embedding vector(1536) not null   -- match your embedding model dims
 );
 create index on kb_chunks using ivfflat (embedding vector_cosine_ops);
 ```
 
-Serialize rows to the camelCase JSON models in §3 at the API boundary.
+Serialize rows to the camelCase models in §3 at the API boundary (a
+session-scoped `kb_files` row → `KnowledgeBaseFile` with `scope: "session"`).
 
 ---
 
-## 9. Auth & security
+## 10. Auth & security
 
-- Hash passwords with bcrypt/argon2; never store plaintext.
-- Sign JWTs with a server secret; include `sub` (user id) and `exp`. Validate on
-  every protected route.
-- Scope every session/KB query by `user_id`. Return 404 (not 403) for resources
-  the caller doesn't own, to avoid leaking existence.
+- Hash passwords (bcrypt/argon2); sign/verify JWTs (`sub`, `exp`).
+- Scope every session/KB/retrieval query by `user_id`; cross-user access → 404.
+- Retrieval must filter by scope (`kb` + current `session` only) — never return
+  another conversation's session chunks.
 - Rate-limit `POST /auth/login` and the chat endpoint.
-- Validate upload type/size before storing. Store blobs outside the web root or
-  in object storage (S3/GCS); serve `Attachment.url` via signed URLs or an
-  authenticated proxy route.
-- Set permissive-but-scoped CORS for the SPA origin.
+- Validate upload type/size before storing; store blobs in object storage; serve
+  `Attachment.url` via signed URLs or an authenticated proxy.
 
 ---
 
-## 10. File storage
+## 11. File storage
 
-- Persist uploaded files to object storage or a blob dir; keep `storage_key` on
+- Persist uploads to object storage / a blob dir; keep `storage_key` on
   `kb_files`.
-- `Attachment.url` should resolve to a downloadable URL (signed or proxied).
-- Enforce a max upload size (return 413); recommend ~25 MB default, configurable.
+- Enforce a max upload size (413); recommend ~25–100 MB configurable. Remember
+  the real inline-vs-ingest gate is **tokens after parse** (§6), not this byte
+  cap.
 
 ---
 
-## 11. Recommended stack & layout
+## 12. Recommended stack & layout
 
-Stack-agnostic, but a natural reference implementation:
-
-- **Python + FastAPI** (great SSE support, RAG ecosystem) **or Node + Express/Hono**.
-- **PostgreSQL + pgvector** for data and embeddings (or a dedicated vector DB
-  such as Qdrant/Weaviate).
-- **An LLM provider** for generation + an embedding model for retrieval. When
-  building on Claude, default to the latest Claude models for generation.
+- **Python + FastAPI** (strong SSE + RAG ecosystem) or **Node + Express/Hono**.
+- **PostgreSQL + pgvector** (or Qdrant/Weaviate).
+- An **LLM** for generation via the tool-use loop + an **embedding model** for
+  retrieval (and a **multimodal embedder** for image-bearing PDFs). When building
+  on Claude, run the tool loop on the latest Claude model (`claude-opus-4-8`) and
+  use the SDK's tool runner (or a manual loop) — `search_knowledge_base` is a
+  normal user-defined tool; scope is injected server-side when you execute it.
 
 ```
 backend/
 ├── app/
-│   ├── main.py / index.ts        # bootstrap + CORS
-│   ├── auth/                      # login, me, logout, jwt, hashing
-│   ├── sessions/                  # CRUD + messages
-│   ├── chat/                      # SSE endpoint + RAG pipeline + tools
-│   ├── kb/                        # upload, list, reindex, tags, delete, ingest
-│   ├── rag/                       # chunking, embeddings, vector store, retrieval
-│   ├── models/                    # ORM models
-│   └── schemas/                   # request/response DTOs (camelCase out)
+│   ├── auth/          # login, me, logout, jwt, hashing
+│   ├── sessions/      # CRUD + messages + session files + promote
+│   ├── chat/          # SSE endpoint + tool-use loop + event mapping
+│   ├── kb/            # upload, list, reindex, tags, delete
+│   ├── rag/           # ingestion worker, chunking, embeddings (+ multimodal),
+│   │                  # vector store, scoped retrieval (the tool impl)
+│   ├── models/        # ORM models
+│   └── schemas/       # request/response DTOs (camelCase out)
+├── workers/           # ingestion queue consumer
 ├── migrations/
 └── tests/
 ```
 
 ---
 
-## 12. Seed data (for demo parity)
+## 13. Seed data (for demo parity)
 
-Optional but recommended so a fresh deploy mirrors the mock UX. Seed source:
-the constants in [`src/lib/mock.ts`](../src/lib/mock.ts).
+Source: constants in [`src/lib/mock.ts`](../src/lib/mock.ts).
 
-- **Demo user:** `email: demo@example.com`, `displayName: "Alex Demo"` (set any
-  demo password; the frontend login pre-fills `demo@example.com`).
-- **5 sessions** with sample messages: "How does RAG work?", "Python async
-  patterns", "Quarterly report analysis" (with an attachment), "Database
-  optimization tips", "Welcome to RAG Chat" — staggered timestamps (today,
-  3h ago, yesterday, 5 days, 2 weeks) so date-grouping is exercised.
-- **6 KB files** with varied state: `company-handbook.pdf` (ready, 142 chunks,
-  `hr,policy`), `api-documentation.md` (ready, 89, `engineering,api`),
+- **Demo user:** `demo@example.com`, `displayName: "Alex Demo"`.
+- **5 sessions** with sample messages (RAG, Python async, quarterly report w/
+  attachment, DB optimization, welcome) — staggered timestamps so date-grouping
+  shows.
+- **6 KB files** (`scope: kb`) with varied state: `company-handbook.pdf` (ready,
+  142, `hr,policy`), `api-documentation.md` (ready, 89, `engineering,api`),
   `quarterly-report-q1.pdf` (ready, 67, `finance,reports`),
   `product-roadmap.docx` (indexing, 0, `product,planning`),
-  `research-paper.pdf` (ready, 203, `research,ml`),
-  `meeting-notes.txt` (error, 0, `meetings`).
+  `research-paper.pdf` (ready, 203, `research,ml`), `meeting-notes.txt` (error,
+  0, `meetings`).
 
 ---
 
-## 13. Acceptance checklist
+## 14. Acceptance checklist
 
-- [ ] `POST /auth/login` returns a JWT + user; `GET /auth/me` validates it; bad
-      token → 401.
-- [ ] Sessions CRUD works; list sorted by `updatedAt desc`; deletes cascade.
-- [ ] `GET /sessions/:id/messages` returns chronological messages.
-- [ ] `POST /sessions/:id/chat` streams SSE in the exact event order of §6,
-      persists both messages, auto-titles `"New Chat"`, bumps `updatedAt`.
-- [ ] StreamEvent JSON shapes match `src/types/chat.ts` exactly.
-- [ ] KB list supports `search` / `status` / `tag` filters; sorted by
-      `uploadDate desc`.
-- [ ] Upload validates type/size, ingests, flips `indexing → ready` with a real
-      `chunkCount`; failure → `error`.
-- [ ] Reindex, tag update, delete behave per §7.
-- [ ] All session/KB resources are user-scoped; cross-user access → 404.
-- [ ] Errors use the `{ message, code }` shape with correct status codes.
-- [ ] `src/lib/api.ts` swapped to real `fetch` calls and the existing UI works
-      end-to-end with no other frontend changes.
+- [ ] Auth: login issues a JWT; `me` validates it; bad token → 401.
+- [ ] Sessions CRUD works; list sorted `updatedAt desc`; delete cascades messages
+      **and** session-scoped files/chunks.
+- [ ] `GET /sessions/:id/messages` is chronological; user-message attachments
+      include both inline and `ingested: true` files.
+- [ ] **Chat is agentic:** `POST /sessions/:id/chat` runs a tool-use loop and
+      emits `calling_tool` events **per actual `search_knowledge_base` call** —
+      zero for trivial messages, several for compound ones — each with a unique
+      `StepEvent.id`. Event JSON matches `src/types/chat.ts`.
+- [ ] **Scope is server-injected:** retrieval searches `kb` + current `session`
+      only; cross-session/-user chunks never leak. `toolArgs.scope` reflects
+      whether the conversation has session files.
+- [ ] **Ingress is token-based:** small attachments inline; large ones ingest
+      session-scoped; the byte threshold is not the source of truth.
+- [ ] **Image-bearing PDFs** use the multimodal ingestion branch (content isn't
+      silently dropped to a thin text layer).
+- [ ] Session files: ingestion produces `scope: session` files retrievable in
+      that chat; `GET /sessions/:id/files` lists them; they do **not** appear in
+      `GET /knowledge-base`; promote flips one to `scope: kb`.
+- [ ] KB upload validates type/size, ingests, flips `indexing → ready` with a
+      real `chunkCount`; reindex/tags/delete behave per §8.3.
+- [ ] Errors use `{ message, code }` with correct status codes.
+- [ ] `src/lib/api.ts` swapped to real `fetch`; the existing UI works end-to-end
+      with no other frontend changes.

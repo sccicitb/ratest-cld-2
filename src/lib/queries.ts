@@ -12,6 +12,8 @@ export const queryKeys = {
   session: (id: string) => ["sessions", id] as const,
   messages: (id: string) => ["sessions", id, "messages"] as const,
   kbFiles: (filters?: KBFilters) => ["kb-files", filters ?? {}] as const,
+  sessionFiles: (sessionId: string) =>
+    ["session-files", sessionId] as const,
 };
 
 // --- Sessions ------------------------------------------------------ //
@@ -84,6 +86,14 @@ export function useReindexKBFile() {
   return useMutation({
     mutationFn: (id: string) => api.reindexKnowledgeBaseFile(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["kb-files"] }),
+  });
+}
+
+export function useSessionFiles(sessionId: string) {
+  return useQuery({
+    queryKey: queryKeys.sessionFiles(sessionId),
+    queryFn: () => api.getSessionFiles(sessionId),
+    enabled: !!sessionId,
   });
 }
 

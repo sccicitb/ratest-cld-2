@@ -10,6 +10,7 @@ import type {
 } from "@/types/chat";
 
 export interface StepState {
+  id?: string;
   step: PipelineStep;
   status: StepStatus;
   toolName?: string;
@@ -48,10 +49,14 @@ export function useStreamChat(sessionId: string) {
         for await (const event of streamChat(sessionId, message, attachments)) {
           if (abortRef.current) break;
           switch (event.type) {
-            case "step":
+            case "step": {
+              // Steps with an id (repeatable tool calls) are keyed by id;
+              // single-occurrence pipeline steps are keyed by their name.
+              const key = event.id ?? event.step;
               setSteps((prev) => {
-                const idx = prev.findIndex((s) => s.step === event.step);
+                const idx = prev.findIndex((s) => (s.id ?? s.step) === key);
                 const next: StepState = {
+                  id: event.id,
                   step: event.step,
                   status: event.status,
                   toolName: event.toolName,
@@ -63,6 +68,7 @@ export function useStreamChat(sessionId: string) {
                 return copy;
               });
               break;
+            }
             case "token":
               setStreamedContent((prev) => prev + event.content);
               break;

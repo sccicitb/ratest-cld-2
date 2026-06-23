@@ -77,3 +77,14 @@ export const updateFileTags = (
   id: string,
   tags: string[],
 ): Promise<KnowledgeBaseFile> => mock.mockUpdateFileTags(id, tags);
+
+// --- Session-scoped files (heavy chat attachments) ---------------- //
+export const getSessionFiles = (
+  sessionId: string,
+): Promise<KnowledgeBaseFile[]> => mock.mockGetSessionFiles(sessionId);
+
+export const promoteSessionFile = (
+  sessionId: string,
+  fileId: string,
+): Promise<KnowledgeBaseFile> =>
+  mock.mockPromoteSessionFile(sessionId, fileId);

@@ -90,3 +90,53 @@ export function isValidFileType(fileName: string): boolean {
   const lower = fileName.toLowerCase();
   return SUPPORTED_FILE_TYPES.some((ext) => lower.endsWith(ext));
 }
+
+const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg"] as const;
+
+/** Whether a filename is an image (sent to the model as a vision block). */
+export function isImageFile(fileName: string): boolean {
+  const lower = fileName.toLowerCase();
+  return IMAGE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+// Hard ceiling for anything the composer will accept — purely a sanity guard.
+export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024; // 100 MB
+
+// Inline routing threshold for documents. NOTE: in the real backend the inline-
+// vs-ingest decision is made on *token count after parsing* (bytes ≠ tokens — an
+// image-heavy PDF can be 30 MB yet only a few thousand tokens). The frontend
+// can't count tokens, so this byte size is only a crude demo proxy + sanity
+// ceiling; the authoritative routing happens server-side.
+export const MAX_INLINE_DOC_BYTES = 2 * 1024 * 1024; // 2 MB
+
+export type AttachmentRoute =
+  | { route: "inline" }
+  | { route: "ingest"; note: string }
+  | { route: "reject"; reason: string };
+
+/**
+ * Decide how a file dropped into the chat composer should be handled:
+ * - `inline`  — small enough to send straight into the model's context
+ * - `ingest`  — too big to inline; gets session-scoped ingestion (retrievable
+ *               in this chat only, NOT added to the global Knowledge Base)
+ * - `reject`  — unsupported type, or past the sanity ceiling
+ */
+export function routeChatAttachment(file: {
+  name: string;
+  size: number;
+}): AttachmentRoute {
+  if (!isValidFileType(file.name)) {
+    return { route: "reject", reason: "Unsupported file type" };
+  }
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    return { route: "reject", reason: "File too large (max 100 MB)" };
+  }
+  // Images go inline as vision blocks regardless of size (within the ceiling).
+  if (isImageFile(file.name)) {
+    return { route: "inline" };
+  }
+  if (file.size > MAX_INLINE_DOC_BYTES) {
+    return { route: "ingest", note: "Indexed for this chat" };
+  }
+  return { route: "inline" };
+}
