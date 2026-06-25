@@ -32,9 +32,10 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 100 * 1024 * 1024  # sanity ceiling (§11)
 
     # --- Auth (§4, §10) ---
-    jwt_secret: str = "dev-secret-change-me"
+    jwt_secret: str = "dev-secret-change-me-please-32-bytes-minimum"
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 14
+    cookie_secure: bool = True  # set False for plain-HTTP dev / tests
 
     # --- Tool loop safety rails (§7) ---
     max_tool_iterations: int = 6

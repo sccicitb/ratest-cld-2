@@ -25,9 +25,11 @@ this README is just how to run it.
 
 ```bash
 cd backend
-cp .env.example .env          # then edit MODEL_BASE_URL etc.
-uv sync                       # core deps
-uv sync --extra ingest        # + PyMuPDF / python-docx for ingestion (§8.1)
+cp .env.example .env                      # then edit MODEL_BASE_URL etc.
+uv sync --extra dev                       # foundation (web + db + auth) + test deps
+# later, per area:
+#   uv sync --extra rag --extra llm       # Qdrant + FastEmbed + chat client
+#   uv sync --extra ingest                # PyMuPDF / python-docx (§8.1)
 ```
 
 Bring up Qdrant (from the repo root):

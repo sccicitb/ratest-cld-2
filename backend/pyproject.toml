@@ -11,14 +11,20 @@ dependencies = [
     "alembic>=1.13",
     "python-multipart>=0.0.9",   # multipart uploads (§6.1, §8.3)
     "pyjwt>=2.9",                 # access/refresh JWTs (§4)
-    "passlib[bcrypt]>=1.7",       # password hashing (§10)
-    "httpx>=0.27",
-    "openai>=1.40",              # OpenAI-compatible chat client → MODEL_BASE_URL (§7)
-    "qdrant-client>=1.11",        # vector store (§9.2)
-    "fastembed>=0.3",            # BGE-M3 embeddings + reranker, in-process (§8.1/§8.5)
+    "bcrypt>=4.1",                # password hashing (§10)
+    "httpx>=0.27",                # async HTTP + FastAPI TestClient
 ]
 
 [project.optional-dependencies]
+# Vector store + in-process embeddings/rerank — install for retrieval/ingestion.
+rag = [
+    "qdrant-client>=1.11",        # vector store (§9.2)
+    "fastembed>=0.3",            # BGE-M3 embeddings + reranker, in-process (§8.1/§8.5)
+]
+# OpenAI-compatible chat client → MODEL_BASE_URL (§7).
+llm = [
+    "openai>=1.40",
+]
 # Document extraction / OCR — install when implementing ingestion (§8.1).
 # surya-ocr is large (model weights) and Open-RAIL-M licensed (§6) — add explicitly.
 ingest = [
