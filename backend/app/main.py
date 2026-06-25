@@ -14,6 +14,9 @@ from app.config import settings
 
 app = FastAPI(title="RAG Chat API", version="0.1.0")
 
+from app.errors import register_error_handlers  # noqa: E402
+register_error_handlers(app)
+
 # In production the SPA and API share an origin behind a reverse proxy, so CORS
 # is moot; in dev the Vite server proxies /api → here. These origins are a
 # convenience for running split-origin during development (§2).

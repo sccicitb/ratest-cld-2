@@ -4,11 +4,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, HTTPException, Response
+from fastapi import APIRouter, Cookie, Response
 
 from app.auth import security
 from app.auth.deps import CurrentUser, DbSession
 from app.config import settings
+from app.errors import ApiError
 from app.models import RefreshToken, User
 from app.schemas import AuthResponse, LoginRequest, UserOut
 
@@ -51,7 +52,7 @@ def _auth_response(user: User, access_token: str) -> AuthResponse:
 def login(body: LoginRequest, response: Response, db: DbSession) -> AuthResponse:
     user = db.query(User).filter(User.email == body.email.lower()).first()
     if not user or not security.verify_password(body.password, user.password_hash):
-        raise HTTPException(401, {"message": "Invalid credentials", "code": "invalid_credentials"})
+        raise ApiError(401, "invalid_credentials", "Invalid credentials")
     _issue_refresh(db, response, user.id)
     return _auth_response(user, security.create_access_token(user.id))
 
@@ -62,7 +63,7 @@ def refresh(
     db: DbSession,
     refresh_token: Annotated[str | None, Cookie(alias=_COOKIE)] = None,
 ) -> AuthResponse:
-    invalid = HTTPException(401, {"message": "Invalid refresh", "code": "invalid_refresh"})
+    invalid = ApiError(401, "invalid_refresh", "Invalid refresh")
     if not refresh_token:
         raise invalid
 

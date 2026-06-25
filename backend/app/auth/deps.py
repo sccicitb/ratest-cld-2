@@ -3,16 +3,17 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header
 from sqlalchemy.orm import Session
 
 from app.auth.security import decode_access_token
 from app.db import get_db
+from app.errors import ApiError
 from app.models import User
 
 
-def _unauthorized() -> HTTPException:
-    return HTTPException(status_code=401, detail={"message": "Unauthorized", "code": "unauthorized"})
+def _unauthorized() -> ApiError:
+    return ApiError(401, "unauthorized", "Unauthorized")
 
 
 def get_current_user(

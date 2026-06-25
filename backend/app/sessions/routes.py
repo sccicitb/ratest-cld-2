@@ -1,9 +1,10 @@
 """Sessions & messages endpoints (§5). All scoped to the authenticated user."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from app.auth.deps import CurrentUser, DbSession
+from app.errors import ApiError
 from app.models import ChatSession, Message
 from app.schemas import MessageOut, RenameSessionRequest, SessionOut
 
@@ -14,7 +15,7 @@ def _owned(db: DbSession, user_id: str, session_id: str) -> ChatSession:
     """Fetch a session or 404 — never leak another user's session (§5)."""
     s = db.get(ChatSession, session_id)
     if not s or s.user_id != user_id:
-        raise HTTPException(404, {"message": "Session not found", "code": "not_found"})
+        raise ApiError(404, "not_found", "Session not found")
     return s
 
 
