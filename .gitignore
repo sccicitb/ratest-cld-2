@@ -18,4 +18,7 @@ __pycache__/
 /backend/data/
 /backend/.venv/
 
+# SDD scratch (ledger, task briefs, reports, review diffs)
+/.superpowers/
+
 # Frontend artifacts are ignored by frontend/.gitignore
