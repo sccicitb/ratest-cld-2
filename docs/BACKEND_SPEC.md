@@ -62,6 +62,18 @@ On app load (including a hard refresh) the frontend calls `POST /auth/refresh`
 that fails is the user routed to `/login`. The access token itself is held in
 memory; the refresh token lives in the cookie, not in JS-readable storage.
 
+> **Frontend work beyond `api.ts` (the "UI unchanged" caveat is not absolute).**
+> The mock papered over three integration seams that need real frontend changes:
+> 1. **File bytes.** The composer currently **discards the `File` blobs** —
+>    `InputBar` sends only `Attachment` metadata (`url: "#"`) + `IngestFile
+>    {name,size}`. The real app must upload the bytes at send (§6.1).
+> 2. **Send sequencing.** Today `handleSend` fires ingestion and the chat turn
+>    concurrently. The real flow is **upload → then chat** (§6.1).
+> 3. **Auth.** A refresh-on-load call + a `401 → refresh → retry` interceptor,
+>    all requests using `credentials: "include"` (§4).
+>
+> Everything else is a straight `api.ts` delegate swap.
+
 ---
 
 ## 2. Conventions
@@ -69,12 +81,12 @@ memory; the refresh token lives in the cookie, not in JS-readable storage.
 | Aspect | Rule |
 |---|---|
 | Base path | All routes under `/api`. |
-| Auth | `Authorization: Bearer <jwt>` on every route except `POST /auth/login`. |
-| Content type | JSON for requests/responses; SSE endpoints return `text/event-stream`; uploads use `multipart/form-data`. |
+| Auth | `Authorization: Bearer <jwt>` on every route except `POST /auth/login` and `POST /auth/refresh` (which authenticate via the httpOnly refresh cookie, not a bearer). |
+| Content type | JSON for requests/responses; SSE endpoints return `text/event-stream`; uploads use `multipart/form-data` **and respond with `text/event-stream`** (§6.1, §8.3). |
 | Timestamps | ISO-8601 UTC strings (`createdAt`, `updatedAt`, `uploadDate`). |
 | IDs | Opaque strings (UUID v4 recommended). |
 | Casing | JSON keys are **camelCase** (frontend types are camelCase). |
-| CORS | Allow the SPA origin + `Authorization`, `Content-Type`. |
+| CORS / origin | **Same-origin in deployment** — SPA + API behind one reverse proxy, so CORS is effectively moot in prod. In dev, the **Vite dev server proxies `/api` → the backend**, so the browser still sees a single origin. The refresh cookie is therefore `SameSite=Lax` (§4). *Only* if you later split origins do you need `Access-Control-Allow-Credentials: true` + exact-origin reflection (never `*`) and `SameSite=None; Secure`. |
 
 ### Error format
 
@@ -174,6 +186,26 @@ type PipelineStep =
 `active`/`complete` pair. Single-occurrence steps (`thinking`,
 `generating_response`) may omit `id` — the UI keys them by `step`.
 
+> Note: the chat stream **does not** emit `chunk_progress` — ingestion progress
+> comes from the **upload stream** below (matching the mock, where
+> `mockIngestChatFile` is a separate generator from `mockStreamChat`).
+> `chunk_progress` stays in the union as the shared shape.
+
+### Upload-stream events (separate endpoints, separate vocabulary)
+
+The attachment-upload (§6.1) and KB-upload (§8.3) endpoints are **also** SSE, but
+they are different endpoints with different consumers and use their own small
+event set — they do **not** reuse the chat `StreamEvent` union:
+
+```ts
+{ type: "chunk_progress", fileName: string, progress: number,
+  chunkCount: number, total: number }          // per ingesting file (shared shape)
+{ type: "attachment_resolved", attachment: Attachment }       // chat upload (§6.1) — authoritative `ingested`
+{ type: "file_resolved", file: KnowledgeBaseFile }            // KB upload (§8.3) — the ready/error record
+{ type: "done" }
+{ type: "error", message: string }
+```
+
 ---
 
 ## 4. Authentication endpoints
@@ -183,8 +215,12 @@ from the original memory-only mock (§1) to fix the hard-refresh logout.
 - **Access token** — short-lived JWT (~15 min), `sub = user.id`, held **in
   memory** by the frontend, sent as `Authorization: Bearer`.
 - **Refresh token** — long-lived (~7–30 days), opaque, set as an **httpOnly,
-  Secure, SameSite cookie** (JS can't read it). Store a **hash** server-side in
-  `refresh_tokens` (§9.1) so it can be revoked.
+  Secure, `SameSite=Lax`** cookie scoped to `Path=/api/auth` (JS can't read it).
+  `Lax` is sufficient because the SPA and API share an origin (reverse proxy in
+  prod; Vite `/api` proxy in dev — §2). Store a **hash** server-side in
+  `refresh_tokens` (§9.1) so it can be revoked. *(Split-origin deployments only:
+  switch to `SameSite=None; Secure` + CORS credentials.)* The frontend sends all
+  auth + authed requests with `credentials: "include"`.
 
 ### `POST /api/auth/login`
 Mock: `mockLogin`. Verify email + password hash; return the **access token** in
@@ -204,7 +240,9 @@ Mock: `mockGetMe`. Validate the bearer access token.
 - **200:** `User` · **401:** missing/invalid/expired.
 
 ### `POST /api/auth/logout`
-Revoke the stored refresh token and clear the cookie.
+Reads the refresh cookie (no bearer required), revokes the stored refresh token,
+and clears the cookie. Idempotent — a missing/already-revoked token still returns
+200.
 - **200:** empty.
 
 ---
@@ -301,6 +339,45 @@ the llama-server endpoint to have the multimodal projector (`mmproj`) loaded.
 > The model never "ingests." Ingestion is event-driven (an upload), not a tool
 > the model calls. Only **retrieval** is a tool.
 
+> The frontend's `routeChatAttachment` (byte-based) is only a **preview**. The
+> **backend re-decides** inline vs ingest by token count during upload (§6.1)
+> and returns the authoritative `ingested` flag. `reject` stays purely
+> frontend-side (blocked before any upload).
+
+### 6.1 Attachment upload protocol (multipart → SSE, at send)
+
+Bytes are uploaded **when the message is sent**, not when the file is attached.
+On send, the frontend performs two **sequential** steps:
+
+**Step 1 — upload.** `POST /api/sessions/:id/attachments`, `multipart/form-data`
+with one or more `files`. **Response is `text/event-stream`** (upload-stream
+events, §3). The backend is the **routing authority** — per file it stores the
+blob (→ `url`/`storage_key`), parses, counts tokens (§6), then:
+
+| Decision | Backend action | Events emitted (for that file) |
+|---|---|---|
+| **inline** (≤ `INLINE_TOKEN_BUDGET`) | persist an `attachment` record | `attachment_resolved` with `ingested: false` |
+| **ingest** (> budget) | create a `kb_files` row (`scope: session`, `status: indexing`), run the ingestion pipeline (§8.1) | `chunk_progress` (repeated) → `attachment_resolved` with `ingested: true` |
+
+The stream ends with `done` once every file is resolved. This is where the chat
+feed's inline `ChunkingProgress` rows come from — the **upload** stream, not the
+chat stream.
+
+**Step 2 — chat.** After the upload stream **closes**, `POST
+/api/sessions/:id/chat` with the message and the **resolved** attachments (§7).
+
+**Ordering is deliberate (upload fully completes before chat).** A freshly
+uploaded session file must be retrievable in the *first* turn ("summarize the
+file I just sent"), so the chat turn starts only after ingestion finishes.
+Trade-off: a large PDF delays the first answer by its indexing time — acceptable,
+and the progress UI covers the wait. *(Async alternative — start chat
+immediately and let the file flip `ready` mid-turn — rejected for v1: the first
+retrieval could miss the file.)*
+
+**Orphans.** Files uploaded but never sent (send cancelled) leave unbound
+`attachment` rows / `indexing` session files — sweep them on a TTL. Bound session
+files are cleaned with their session (§8.2).
+
 ---
 
 ## 7. Chat streaming (SSE) — agentic tool-calling RAG
@@ -320,9 +397,12 @@ Mock: `mockStreamChat`. A **Server-Sent Events** stream that runs the model's
     ]
   }
   ```
-  Inline attachments are placed into the model's context for this turn. Ingested
-  attachments (`ingested: true`) are *not* inlined — they're retrieved via the
-  tool (their bytes were uploaded separately for ingestion, §8).
+  These are the **resolved** attachment records returned by the preceding upload
+  step (§6.1) — the bytes are already stored/indexed. Inline attachments
+  (`ingested: false`) are loaded into the model's context for this turn; ingested
+  ones (`ingested: true`) are *not* inlined — they're reached via the retrieval
+  tool. The backend looks up each attachment's content by `id` (never re-uploaded
+  here).
 - **Response:** `text/event-stream`, one JSON `StreamEvent` per `data:` line,
   blank line between events, stream closed after `done`:
   ```
@@ -409,7 +489,7 @@ is **dynamic** (0..n):
 | Loop event | SSE event(s) |
 |---|---|
 | Planning / query understanding begins → ends | `step thinking active` → `complete` |
-| Model returns a `search_knowledge_base` tool call | `step calling_tool active` with a **unique `id`**, `toolName: "search_knowledge_base"`, `toolArgs: { query, scope }` |
+| Model returns a `search_knowledge_base` tool call | `step calling_tool active` with a **unique `id`**, `toolName: "search_knowledge_base"`, `toolArgs: { query, scope }` — `query` is the model's argument; **`scope` is injected by the backend for display only** (it is not a tool `parameter`, §7 tool def), reflecting the scope filter actually applied (`"kb"` vs `"this chat + KB"`) |
 | You run the vector search for that call | (optionally) `step retrieving_context active` → `complete` |
 | You return the tool result; that call resolves | `step calling_tool complete` (same `id`) |
 | Model generates the answer | `step generating_response active`, then `token` per delta, then `complete` |
@@ -521,8 +601,10 @@ Triggered by KB upload, KB reindex, and session-scoped chat ingestion. Steps:
 4. **Embed** — **BGE-M3** via **FastEmbed** (Qdrant's library), running
    **in-process** as ONNX — no embedding server to host. CPU by default; GPU via
    the `fastembed-gpu` package. BGE-M3 emits **dense
-   (1024-dim) + sparse** vectors in one pass (and optional ColBERT/multi-vector
-   for reranking — see §8.5). The **same pinned model** is used for indexing and
+   (1024-dim) + sparse** vectors in one pass — store both (§9.2). (BGE-M3 can
+   also emit ColBERT vectors, but v1's reranker is a cross-encoder, so they are
+   **not** generated or stored — §8.5.) The **same pinned model** is used for
+   indexing and
    querying — a mismatch silently breaks retrieval. BGE-M3 needs **no**
    query/passage prefixes. (Scanned pages are already text by this point, via
    Surya in step 2 — BGE-M3 embeds that text like any other.)
@@ -559,7 +641,7 @@ them inline; the type already exists). Reindex re-runs this pipeline.
 | Method · Path | Mock | Behavior |
 |---|---|---|
 | `GET /api/knowledge-base` | `mockGetKBFiles` | `KnowledgeBaseFile[]` (scope `kb` only), sorted by `uploadDate` **desc**; filters `search` / `status` / `tag` (AND) |
-| `POST /api/knowledge-base/upload` | `mockUploadKBFile` | `multipart/form-data` (`file`); validate type (415) + size (413); create `indexing` record; run §8.1; returns the file |
+| `POST /api/knowledge-base/upload` | `mockUploadKBFile` | `multipart/form-data` (`file`); validate type (415) + size (413). **Response is `text/event-stream`**: create the `indexing` record, run §8.1 streaming `chunk_progress`, then emit `file_resolved` with the `ready` record (or `error`), then `done`. The KB page's upload cards consume this — **no separate polling needed**. (Network-upload % is a client concern via XHR upload events; the SSE covers the indexing phase.) |
 | `POST /api/knowledge-base/:id/reindex` | `mockReindexKBFile` | set `indexing`, re-run §8.1, back to `ready` with new `chunkCount` |
 | `PATCH /api/knowledge-base/:id/tags` | `mockUpdateFileTags` | body `{ tags }` (lowercase + de-dupe) |
 | `DELETE /api/knowledge-base/:id` | `mockDeleteKBFile` | delete file, blob, and chunks |
@@ -576,7 +658,7 @@ upload endpoint must validate against the **document-only** subset (415 otherwis
 
 | Method · Path | Mock | Behavior |
 |---|---|---|
-| ingestion | `mockIngestChatFile` | invoked when the chat composer sends an `ingest`-routed attachment: run §8.1 with `scope = session`, `session_id = :id`. Optionally stream `chunk_progress`. |
+| ingestion | `mockIngestChatFile` | **No separate endpoint** — session ingestion happens inside the attachment-upload stream (`POST /api/sessions/:id/attachments`, §6.1): files routed to `ingest` run §8.1 with `scope = session`, `session_id = :id`, streaming `chunk_progress` then `attachment_resolved`. |
 | `GET /api/sessions/:id/files` | `mockGetSessionFiles` | `KnowledgeBaseFile[]` for this session (scope `session`); powers the **"This chat's files"** section of the Sources drawer |
 | `POST /api/sessions/:id/files/:fileId/promote` | `mockPromoteSessionFile` | flip a session file to `scope = kb` (the "Save to Knowledge Base" action); returns the promoted `KnowledgeBaseFile` |
 
@@ -654,9 +736,12 @@ attachments: id (pk), message_id (fk→messages, cascade), file_name, file_type,
 kb_files:    id (pk), user_id (fk→users, cascade), scope(kb|session)="kb",
              session_id? (fk→sessions, cascade; set when scope=session),
              name, size, upload_date, chunk_count=0, status(indexing|ready|error),
-             tags (JSON or child table — NOT a native array), storage_key,
-             modality(text|multimodal)="text"
+             tags (JSON or child table — NOT a native array), storage_key
              [idx: (user_id, scope, upload_date desc), (session_id)]
+             # NOTE: no `modality` column in v1 — every ingested file becomes
+             # text (PyMuPDF or Surya OCR), so there is no text-vs-multimodal
+             # distinction to store. Add one only if a visual-embedding path
+             # (e.g. ColBERT page-images) is introduced later.
 ```
 
 The previous `kb_chunks` table is **gone** — chunks now live in Qdrant (§9.2).
@@ -672,8 +757,10 @@ collection "kb_chunks":
     dense   → size 1024, distance Cosine      # BGE-M3 dense
   sparse_vectors:
     sparse                                     # BGE-M3 sparse (BM25-style)
-  # optional, only if reranking with ColBERT (§8.5):
-  # colbert → multivector, comparator MaxSim
+  # NOT in v1 — the chosen reranker is a cross-encoder (bge-reranker-v2-m3, §8.5),
+  # which re-scores fetched chunk TEXT and needs no stored vectors. A `colbert`
+  # multivector (comparator MaxSim) would only be added if you later switch to
+  # late-interaction reranking. Do not create it now.
 
   payload (per point):
     content    : string
@@ -922,8 +1009,22 @@ Source: constants in [`src/lib/mock.ts`](../src/lib/mock.ts).
       whether the conversation has session files.
 - [ ] **Ingress is token-based:** small attachments inline; large ones ingest
       session-scoped; the byte threshold is not the source of truth.
-- [ ] **Image-bearing PDFs** use the multimodal ingestion branch (content isn't
-      silently dropped to a thin text layer).
+- [ ] **Scanned / image-only PDFs** are detected (thin text layer) and routed
+      through **Surya OCR → text**, then chunked/embedded like any text — there
+      is no multimodal embedding branch (BGE-M3 is text-only). Standalone images
+      are chat-only via Qwen vision, never KB-ingested.
+- [ ] **Attachment bytes upload at send:** `POST /sessions/:id/attachments`
+      (multipart → SSE) stores blobs, **re-decides inline vs ingest by token
+      count** (returns authoritative `ingested`), streams `chunk_progress` +
+      `attachment_resolved`; the chat turn starts only **after** that stream
+      closes. The frontend no longer discards `File` blobs.
+- [ ] **KB upload is multipart → SSE:** streams `chunk_progress` then
+      `file_resolved`; the KB page learns `indexing → ready` from the stream (no
+      polling).
+- [ ] **Auth cookie + topology:** refresh token is httpOnly/Secure/`SameSite=Lax`
+      on a shared origin (reverse proxy in prod, Vite `/api` proxy in dev);
+      frontend does refresh-on-load + `401 → refresh → retry`, all requests with
+      `credentials: "include"`.
 - [ ] **Tool loop is model-agnostic:** runs against an OpenAI-compatible
       endpoint; swapping model = base-URL/model-name change; no vendor SDK in the
       loop; results returned as `role: "tool"` + `tool_call_id`.
