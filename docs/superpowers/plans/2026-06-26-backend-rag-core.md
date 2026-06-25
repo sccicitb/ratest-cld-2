@@ -78,11 +78,13 @@ def test_401_envelope(client):
     assert r.json()["code"] == "unauthorized"
 
 
-def test_validation_error_envelope(client, auth_headers):
-    # PATCH with a wrong-typed title triggers a 422 from FastAPI.
-    r = client.patch("/api/sessions/x", headers=auth_headers, json={"title": 123})
-    assert r.status_code in (404, 422)
-    assert "message" in r.json() and "code" in r.json()
+def test_validation_error_envelope(client):
+    # Missing required `password` → body validation → 422, with no auth/404 gate
+    # in front (PATCH on a session would 404 before validation runs).
+    r = client.post("/api/auth/login", json={"email": "x@example.com"})
+    assert r.status_code == 422
+    assert r.json()["code"] == "validation_error"
+    assert "message" in r.json() and "detail" not in r.json()
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -110,9 +112,10 @@ class ApiError(Exception):
 
 
 def register_error_handlers(app: FastAPI) -> None:
+    # NOTE: JSONResponse signature is (content, status_code) — content first.
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError) -> JSONResponse:
-        return JSONResponse(exc.status, {"message": exc.message, "code": exc.code})
+        return JSONResponse({"message": exc.message, "code": exc.code}, exc.status)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(_: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -121,11 +124,19 @@ def register_error_handlers(app: FastAPI) -> None:
             body = {"message": detail["message"], "code": detail.get("code", "error")}
         else:
             body = {"message": str(detail), "code": "error"}
-        return JSONResponse(exc.status_code, body)
+        return JSONResponse(body, exc.status_code)
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:
-        return JSONResponse(422, {"message": "Validation error", "code": "validation_error"})
+        # Include the first error's location + reason for a debuggable message.
+        errors = exc.errors()
+        if errors:
+            first = errors[0]
+            loc = ".".join(str(p) for p in first.get("loc", []))
+            message = f"{loc}: {first.get('msg', 'invalid')}".strip(": ")
+        else:
+            message = "Validation error"
+        return JSONResponse({"message": message, "code": "validation_error"}, 422)
 ```
 
 - [ ] **Step 4: Register handlers in `app/main.py`** (after `app = FastAPI(...)`)
