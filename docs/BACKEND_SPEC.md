@@ -4,9 +4,14 @@ This document specifies the backend that replaces the mock layer in
 [`src/lib/mock.ts`](../src/lib/mock.ts). It is written to be handed directly to
 a coding agent (Codex, Claude Code, etc.) as an implementation brief.
 
+**Status: LOCKED for v1 implementation.** Endpoint shapes, SSE event vocabularies,
+data models, and the stack are final; subsequent work implements against this.
+
 The frontend already exists and is fully functional against an in-memory mock.
-**The contract below is exactly what the frontend expects** — match it and the
-UI works unchanged except for the one integration file noted in §1.
+**The contract below is exactly what the frontend expects.** Most of it is a
+straight `api.ts` delegate swap; three integration seams the mock papered over
+need real frontend work — enumerated in the §1 callout. Match the contract and
+everything else in the UI is unchanged.
 
 > **Architecture in one paragraph.** Retrieval from the knowledge base is an
 > **agentic tool call** (`search_knowledge_base`) the model decides to make —
@@ -52,10 +57,14 @@ below. Specifics:
 3. **Streaming** — `streamChat()` returns an `AsyncGenerator<StreamEvent>`. It
    fetches the SSE endpoint (§7) and yields parsed `StreamEvent` objects whose
    shapes match [`src/types/chat.ts`](../src/types/chat.ts) exactly.
-4. **New endpoints since the first draft** — session-scoped files
-   (`GET /sessions/:id/files`) and promote-to-KB
-   (`POST /sessions/:id/files/:fileId/promote`). The frontend calls these via
-   `getSessionFiles` / `promoteSessionFile` in `api.ts`.
+4. **New endpoints the integration layer must add** beyond the existing mock
+   delegates:
+   - `POST /sessions/:id/attachments` — multipart → SSE attachment upload (§6.1).
+   - `GET /sessions/:id/files` / `POST /sessions/:id/files/:fileId/promote` —
+     session-scoped files (`getSessionFiles` / `promoteSessionFile`, already in
+     `api.ts`).
+   - `POST /auth/refresh` — silent session restore (§4).
+   The KB-upload and chat endpoints also become SSE (were plain in the mock).
 
 On app load (including a hard refresh) the frontend calls `POST /auth/refresh`
 (§4) using the httpOnly refresh cookie to silently restore the session; only if
@@ -233,7 +242,11 @@ Reads the refresh cookie (no body). Validate it against the stored hash; if vali
 old refresh token (reuse of an old one ⇒ treat as compromise, revoke the chain).
 The frontend calls this (a) automatically on a **401** then retries the original
 request, and (b) **on app load** to restore the session silently.
-- **200:** `{ accessToken }` (+ new refresh cookie) · **401:** missing/invalid/revoked.
+- **200:** **`AuthResponse`** (`{ accessToken, user }`) + new refresh cookie ·
+  **401:** missing/invalid/revoked.
+
+  Returns the full `AuthResponse` (not just the token) so app-load restore is a
+  single round-trip — no follow-up `GET /me` needed.
 
 ### `GET /api/auth/me`
 Mock: `mockGetMe`. Validate the bearer access token.
@@ -287,8 +300,9 @@ extract/parse the file  →  count tokens  →
     tokens >  INLINE_TOKEN_BUDGET   → ingest (session-scoped, §8)
 ```
 
-`INLINE_TOKEN_BUDGET` is configurable (a few thousand to ~tens of thousands of
-tokens). The frontend cannot count tokens, so its byte thresholds
+`INLINE_TOKEN_BUDGET` is configurable; **default 6000 tokens** (room for a few
+pages of text inline without crowding the context window — tune per deployed
+model). The frontend cannot count tokens, so its byte thresholds
 ([`utils.ts`](../src/lib/utils.ts): `routeChatAttachment`) are only a **crude
 proxy + sanity ceiling** — never the source of truth. The backend re-decides.
 
@@ -347,7 +361,8 @@ the llama-server endpoint to have the multimodal projector (`mmproj`) loaded.
 ### 6.1 Attachment upload protocol (multipart → SSE, at send)
 
 Bytes are uploaded **when the message is sent**, not when the file is attached.
-On send, the frontend performs two **sequential** steps:
+When the message has **no attachments, Step 1 is skipped** — go straight to chat.
+Otherwise the frontend performs two **sequential** steps:
 
 **Step 1 — upload.** `POST /api/sessions/:id/attachments`, `multipart/form-data`
 with one or more `files`. **Response is `text/event-stream`** (upload-stream
@@ -393,7 +408,7 @@ Mock: `mockStreamChat`. A **Server-Sent Events** stream that runs the model's
     "message": "How does our pricing compare to last quarter?",
     "attachments": [
       { "id": "att-1", "fileName": "q2.pdf", "fileType": "application/pdf",
-        "fileSize": 240000, "url": "#", "ingested": false }
+        "fileSize": 240000, "url": "/api/files/att-1", "ingested": false }
     ]
   }
   ```
@@ -588,8 +603,12 @@ the model's context window.
 
 Triggered by KB upload, KB reindex, and session-scoped chat ingestion. Steps:
 
-1. **Extract** — per type: **text-layer PDF → PyMuPDF**; DOCX (`python-docx`);
-   TXT/MD/CSV/JSON directly.
+1. **Extract** — per type: **text-layer PDF → PyMuPDF**; `.docx` (`python-docx`);
+   TXT/MD/CSV/JSON directly. **`.doc` (legacy Word)** is not readable by
+   python-docx — convert it first via **LibreOffice headless**
+   (`soffice --headless --convert-to docx`) in the worker, then parse the result.
+   (If the LibreOffice dependency is unwanted, drop `.doc` from the supported set
+   in §8.3 and `SUPPORTED_FILE_TYPES`.)
 2. **Text-layer detection → parser vs OCR** — parse the PDF and measure text
    density. If it has a real text layer, use the extracted text. If it's
    **scanned / image-only** (thin or no text), route to **Surya OCR → text**
@@ -653,6 +672,17 @@ pixels, so it would be unsearchable. Images remain valid **chat** attachments
 (read live by Qwen vision; §6). `SUPPORTED_FILE_TYPES` in
 [`utils.ts`](../src/lib/utils.ts) still lists images for the composer; the KB
 upload endpoint must validate against the **document-only** subset (415 otherwise).
+
+**Observing `indexing → ready` (not just on upload).** The upload SSE delivers the
+just-uploaded file's `ready` state, but **reindex** and any file *already* sitting
+in `indexing` (e.g. a seed file, or a reindex triggered elsewhere) have no stream
+attached. So the rule is: **the KB list query refetches on an interval (~2–3 s)
+while any file is `indexing`, and stops when none are.** This is the general
+observation path (covers upload, reindex, and pre-existing); the upload SSE is the
+bonus that adds *granular* progress for the active upload. `POST /reindex`
+therefore just returns the updated `indexing` record (JSON, not SSE) — the poll
+picks up the flip. Frontend: `useKnowledgeBaseFiles` gets a conditional
+`refetchInterval`; `useReindexKBFile` already invalidates the list.
 
 ### 8.4 Session-scoped file endpoints (scope `session`)
 
@@ -1019,8 +1049,9 @@ Source: constants in [`src/lib/mock.ts`](../src/lib/mock.ts).
       `attachment_resolved`; the chat turn starts only **after** that stream
       closes. The frontend no longer discards `File` blobs.
 - [ ] **KB upload is multipart → SSE:** streams `chunk_progress` then
-      `file_resolved`; the KB page learns `indexing → ready` from the stream (no
-      polling).
+      `file_resolved` for the active upload. **Reindex / pre-existing `indexing`
+      files** are observed by the KB list **polling while any file is `indexing`**
+      (reindex returns a plain JSON `indexing` record, not SSE).
 - [ ] **Auth cookie + topology:** refresh token is httpOnly/Secure/`SameSite=Lax`
       on a shared origin (reverse proxy in prod, Vite `/api` proxy in dev);
       frontend does refresh-on-load + `401 → refresh → retry`, all requests with
