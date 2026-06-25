@@ -12,11 +12,14 @@ def test_401_envelope(client):
     assert r.json()["code"] == "unauthorized"
 
 
-def test_validation_error_envelope(client, auth_headers):
-    # PATCH with a wrong-typed title triggers a 422 from FastAPI.
-    r = client.patch("/api/sessions/x", headers=auth_headers, json={"title": 123})
-    assert r.status_code in (404, 422)
-    assert "message" in r.json() and "code" in r.json()
+def test_validation_error_envelope(client):
+    # Missing required `password` → FastAPI body validation → 422, no auth gate.
+    r = client.post("/api/auth/login", json={"email": "x@example.com"})
+    assert r.status_code == 422
+    body = r.json()
+    assert body["code"] == "validation_error"
+    assert "message" in body
+    assert "detail" not in body
 
 
 def test_timestamps_are_utc_z(client, auth_headers):

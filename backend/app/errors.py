@@ -1,3 +1,4 @@
+"""Error handling — every error body is the wire contract {message, code} (§2)."""
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
@@ -29,4 +30,11 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:
-        return JSONResponse({"message": "Validation error", "code": "validation_error"}, 422)
+        errors = exc.errors()
+        if errors:
+            first = errors[0]
+            loc = ".".join(str(p) for p in first.get("loc", []))
+            message = f"{loc}: {first.get('msg', 'invalid')}".strip(": ")
+        else:
+            message = "Validation error"
+        return JSONResponse({"message": message, "code": "validation_error"}, 422)
