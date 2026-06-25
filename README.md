@@ -1,101 +1,59 @@
 # RAG Chat
 
-A full-featured Retrieval-Augmented Generation (RAG) chat application built as
-a React SPA. It ships with JWT-style auth, a collapsible chat sidebar, streaming
-responses with pipeline-step visualization, a knowledge-base manager, voice
-input/output, and file attachments.
+A self-hosted Retrieval-Augmented Generation chat app — React SPA + FastAPI
+backend, agentic tool-calling retrieval, a managed knowledge base, and
+session-scoped ingestion of large chat attachments.
 
-> **Everything is mocked.** There is no backend. All API calls, SSE streaming,
-> and upload progress are simulated in a single file — [`src/lib/mock.ts`](src/lib/mock.ts).
-> The app runs fully standalone and all data resets on page refresh.
+## Monorepo layout
 
-## Features
+```
+ratest-cld-2/
+├── frontend/            # React 19 + React Router v8 SPA (TypeScript)
+├── backend/             # FastAPI + Qdrant + FastEmbed (Python)
+├── docs/
+│   └── BACKEND_SPEC.md  # the contract between the two — LOCKED for v1
+├── docker-compose.yml   # dev infra (Qdrant)
+└── README.md
+```
 
-- **Auth** — login screen (any credentials work) with an in-memory token and a
-  protected app shell.
-- **Chat** — streaming assistant responses rendered as Markdown (code blocks,
-  tables, lists) with an inline pipeline tracker: _Thinking → Retrieving →
-  Tool Call → Generating_.
-- **Sessions** — pre-seeded conversations grouped by date (Today / Yesterday /
-  Last 7 Days / Older), with rename and delete.
-- **Knowledge base** — drag-and-drop uploads with simulated progress and
-  indexing, status badges, tag editing, re-index, and delete.
-- **Voice** — speech-to-text input and text-to-speech playback via the Web
-  Speech API (gracefully hidden where unsupported).
-- **Attachments** — attach files to a message with inline preview chips.
-- **Polish** — collapsible animated sidebar, dark sidebar surface, brand theme,
-  confirmation dialogs for destructive actions, full keyboard navigation.
+The **frontend** is complete and runs today against an in-memory mock
+(`frontend/src/lib/mock.ts`). The **backend** implements
+[`docs/BACKEND_SPEC.md`](docs/BACKEND_SPEC.md); when it's live, the frontend's
+`api.ts` swaps its mock delegates for real `fetch` calls (plus the file-upload,
+send-sequencing, and auth changes the spec enumerates in §1).
 
-## Tech stack
-
-| Concern | Choice |
-|---|---|
-| Framework | React 19 + React Router v8 (framework mode, SPA / `ssr: false`) |
-| Language | TypeScript (strict) |
-| Styling | Tailwind CSS v4 (CSS-first `@theme`) + shadcn-style UI on Radix |
-| Server state | TanStack Query |
-| Client state | Zustand (auth, active session, sidebar persistence) |
-| Forms | React Hook Form + Zod |
-| Animation | Framer Motion |
-| Icons | lucide-react |
-| Markdown | react-markdown + remark-gfm |
-
-## Requirements
-
-- **Node ≥ 22.22.0** (React Router v8 / Vite 8 requirement). Use the bundled
-  `.nvmrc` or any Node ≥ 22.22.
-
-## Setup
+## Run the frontend
 
 ```bash
+cd frontend
 npm install
-cp .env.example .env   # optional — VITE_API_BASE_URL is unused while mocked
-npm run dev            # http://localhost:5173
+npm run dev          # http://localhost:5173  (Node ≥ 22.22)
 ```
+Sign in with any credentials (mock auth). See [`frontend/README.md`](frontend/README.md).
 
-Other scripts:
+## Run the backend
 
 ```bash
-npm run typecheck      # react-router typegen && tsc
-npm run build          # production SPA build -> build/client
-npm run start          # serve the production build
+docker compose up -d qdrant     # vector store
+cd backend
+cp .env.example .env
+uv sync
+uv run uvicorn app.main:app --reload --port 8000
 ```
+See [`backend/README.md`](backend/README.md).
 
-Sign in with the pre-filled demo credentials (or anything) to enter the app.
+## Architecture at a glance
 
-## Connecting a real backend
+- **Retrieval is a tool** (`search_knowledge_base`) the model chooses to call —
+  not a hardcoded pipeline. Scope (`kb` + current `session`) is injected
+  server-side; the model never sees a session id.
+- **Files reach the model two ways:** small ones **inline** (into context),
+  large ones are **ingested** (chunk → embed → Qdrant) and reached via the tool.
+  The decision is **token-based**, made server-side after parsing.
+- **One vector store, two scopes:** the persistent Knowledge Base (`kb`) and
+  per-conversation files (`session`).
+- **Self-hosted, model-agnostic:** the chat model is any OpenAI-compatible
+  endpoint; embeddings/rerank run in-process (FastEmbed / BGE-M3).
 
-Only [`src/lib/api.ts`](src/lib/api.ts) needs to change: replace each delegating
-call to `mock.*` with a real `fetch` against `VITE_API_BASE_URL`. The rest of
-the app (queries, hooks, components) is backend-agnostic.
-
-## Environment variables
-
-| Variable | Description |
-|---|---|
-| `VITE_API_BASE_URL` | Base URL for the backend API. Unused while requests are mocked. |
-
-## Project structure
-
-```
-src/
-├── app.css                # Tailwind v4 theme: tokens, brand, dark sidebar
-├── root.tsx               # Root layout, QueryClient, auth bootstrap, splash
-├── routes.ts              # flatRoutes() file-based routing
-├── entry.client.tsx       # SPA client entry
-├── components/
-│   ├── ui/                # shadcn-style primitives (Radix-based)
-│   ├── layout/            # AppShell, Sidebar, SidebarSection, ProfileFooter
-│   ├── chat/              # MessageBubble, StepTracker, InputBar, …
-│   └── kb/                # FileCard, UploadDropzone, UploadTaskCard, TagEditor
-├── hooks/                 # useStreamChat, useVoiceInput, useVoiceSynthesis, …
-├── lib/
-│   ├── mock.ts            # ⭐ all mock data + simulated API behavior
-│   ├── api.ts             # API layer (delegates to mock.ts)
-│   ├── auth.ts            # auth helpers bridging API + store
-│   ├── queries.ts         # TanStack Query hooks
-│   └── utils.ts           # cn, formatters, grouping, file validation
-├── stores/                # authStore, sessionStore, sidebarStore (Zustand)
-├── routes/                # login, _auth layout, index, chat, knowledge-base
-└── types/                 # api, chat, kb type definitions
-```
+Full design, endpoint contracts, SSE event shapes, schema, and the acceptance
+checklist live in [`docs/BACKEND_SPEC.md`](docs/BACKEND_SPEC.md).

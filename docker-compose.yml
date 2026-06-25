@@ -1,0 +1,13 @@
+# Dev infrastructure only. The backend itself runs locally (`uv run`) so it can
+# reach the GPU / FastEmbed / your llama-server; only Qdrant runs as a container.
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333" # REST
+      - "6334:6334" # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  qdrant_data:
