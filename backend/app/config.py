@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     model_name: str = "qwen"
     model_api_key: str = "not-needed"  # llama-server ignores it; set for hosted APIs
 
-    # --- Embeddings / rerank: FastEmbed, in-process (§8.1, §8.5) ---
+    # --- Embeddings / rerank: FlagEmbedding (BGE-M3), in-process (§8.1, §8.5) ---
     embed_model: str = "BAAI/bge-m3"
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_enabled: bool = False  # recall-only ships first (§8.5)

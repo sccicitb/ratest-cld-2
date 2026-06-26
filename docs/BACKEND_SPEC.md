@@ -32,7 +32,11 @@ everything else in the UI is unchanged.
 >   from the chat LLM. Changing it invalidates every stored vector (full
 >   re-index), so it is chosen once and frozen. Chosen model: **BGE-M3**
 >   (embeddings) + **bge-reranker-v2-m3** (reranker), both run **in-process via
->   FastEmbed** (§8.1/§8.5).
+>   FlagEmbedding** — BAAI's official BGE-M3 library (torch; GPU) — which yields
+>   BGE-M3's dense + sparse vectors in one pass (§8.1/§8.5). *(Earlier drafts said
+>   "FastEmbed" — a library mix-up: Qdrant's FastEmbed is ONNX-only and does not
+>   ship BGE-M3. FlagEmbedding is the model itself and is what the "dense+sparse
+>   in one pass" design requires.)*
 > - **Vector store is Qdrant** (was pgvector). **Relational/app data lives in a
 >   separate app DB: SQLite for dev now, migratable to Postgres/MySQL later**
 >   behind an ORM + migrations + repository layer (§9.1); Postgres is no longer
@@ -519,8 +523,8 @@ A trivial message (e.g. "thanks") may produce **zero** tool calls — emit only
 **Ground-up, not a framework.** The loop is hand-written (~60 lines) so it owns
 the SSE seams and scope injection. Lean on libraries for the components — OpenAI
 SDK (pointed at `MODEL_BASE_URL`) for the model call, official `mcp` SDK for MCP,
-FastEmbed / qdrant-client / SQLAlchemy for the rest — but **buy the components,
-build the orchestration**. No LangChain/LangGraph (single-agent; revisit only if
+FlagEmbedding / qdrant-client / SQLAlchemy for the rest — but **buy the
+components, build the orchestration**. No LangChain/LangGraph (single-agent; revisit only if
 this ever goes multi-agent).
 
 **Turn-by-turn** (an async generator yielding `StreamEvent`s):
@@ -617,16 +621,16 @@ Triggered by KB upload, KB reindex, and session-scoped chat ingestion. Steps:
    there is no separate image-embedding branch. (Standalone images are chat-only
    via Qwen vision, never ingested — §6/§8.3.)
 3. **Chunk** — ~500–1000 tokens, ~10–15% overlap, split on structure.
-4. **Embed** — **BGE-M3** via **FastEmbed** (Qdrant's library), running
-   **in-process** as ONNX — no embedding server to host. CPU by default; GPU via
-   the `fastembed-gpu` package. BGE-M3 emits **dense
-   (1024-dim) + sparse** vectors in one pass — store both (§9.2). (BGE-M3 can
-   also emit ColBERT vectors, but v1's reranker is a cross-encoder, so they are
+4. **Embed** — **BGE-M3** via **FlagEmbedding** (`BGEM3FlagModel`), running
+   **in-process** with torch — no embedding server to host. CPU works; **GPU**
+   via torch CUDA (`use_fp16=True`). One `model.encode(..., return_dense=True,
+   return_sparse=True)` call emits **dense (1024-dim) + sparse** vectors in one
+   pass — store both (§9.2). (BGE-M3 can also emit ColBERT/multi-vectors via
+   `return_colbert_vecs`, but v1's reranker is a cross-encoder, so they are
    **not** generated or stored — §8.5.) The **same pinned model** is used for
-   indexing and
-   querying — a mismatch silently breaks retrieval. BGE-M3 needs **no**
-   query/passage prefixes. (Scanned pages are already text by this point, via
-   Surya in step 2 — BGE-M3 embeds that text like any other.)
+   indexing and querying — a mismatch silently breaks retrieval. BGE-M3 needs
+   **no** query/passage prefixes. (Scanned pages are already text by this point,
+   via Surya in step 2 — BGE-M3 embeds that text like any other.)
 5. **Store** — upsert each chunk as a **Qdrant point**: its dense + sparse
    vectors, plus a **payload** carrying `content`, `file_id`, `chunk_idx`,
    `tags`, and the **denormalized scope fields** (`user_id`, `scope`,
@@ -709,12 +713,11 @@ then optionally re-score precisely.**
    but the model is **locked: `BAAI/bge-reranker-v2-m3`** — Apache-2.0
    (commercial-safe), built on bge-m3 (same family as the embedder), explicitly
    supports Indonesian, 512-token input, ~2.27 GB. Run it **in-process via
-   FastEmbed's `TextCrossEncoder`**; it is **not** a built-in FastEmbed model, so
-   register it once with `add_custom_model` pointing at its ONNX export (its HF
-   card carries the `text-embeddings-inference` tag). It re-scores the fused top
-   ~50 down to the final top-k. (Rejected alternative: `jina-reranker-v2-base-
-   multilingual` — CC-BY-NC 4.0, non-commercial, so unusable here despite being a
-   FastEmbed built-in.)
+   FlagEmbedding's `FlagReranker`** (`FlagReranker("BAAI/bge-reranker-v2-m3",
+   use_fp16=True)` → `.compute_score([[query, passage], ...])`). It re-scores the
+   fused top ~50 down to the final top-k. (Rejected alternative:
+   `jina-reranker-v2-base-multilingual` — CC-BY-NC 4.0, non-commercial, so
+   unusable here.)
 
 Return the final top-k chunk `content` (with `file_id`/`chunk_idx` for citation)
 as the tool result. **Start with no reranker**; add one later behind a flag.
@@ -824,7 +827,7 @@ session-scoped `kb_files` record → `KnowledgeBaseFile` with `scope: "session"`
   promote/reindex are part of the security boundary, not just bookkeeping.
 - **Qdrant (and your app DB) are internal services** — bind them to the private
   network; never expose them to the browser or accept their URLs from client
-  input. (Embeddings/reranking run in-process via FastEmbed, so there's no
+  input. (Embeddings/reranking run in-process via FlagEmbedding, so there's no
   embedding service to expose.)
 - Rate-limit `POST /auth/login` and the chat endpoint.
 - Validate upload type/size before storing; store blobs in object storage; serve
@@ -849,10 +852,10 @@ session-scoped `kb_files` record → `KnowledgeBaseFile` with `scope: "session"`
   SQLite now** (SQLAlchemy/SQLModel + Alembic + repository pattern), migratable
   to Postgres/MySQL later by config (§9.1).
 - **BGE-M3** embeddings + **`bge-reranker-v2-m3`** reranker (Apache-2.0,
-  Indonesian-capable), both via **FastEmbed**, running **in-process** (ONNX) — no
-  embedding/reranker server to host. Pinned, not swappable. The reranker needs a
-  one-time `add_custom_model` registration (ONNX). GPU optional via
-  `fastembed-gpu`. (Promote to a server like SIE/Infinity only if you outgrow
+  Indonesian-capable), both via **FlagEmbedding** (`BGEM3FlagModel` +
+  `FlagReranker`), running **in-process** with torch — no embedding/reranker
+  server to host. Pinned, not swappable. **GPU** via torch CUDA (`use_fp16=True`);
+  CPU works for dev. (Promote to a server like TEI/Infinity only if you outgrow
   in-process throughput.)
 - **Chat LLM via any OpenAI-compatible endpoint** (vLLM / Ollama / TGI /
   llama-server / hosted) + a **manual tool-use loop** (§7). Configured default:
@@ -936,7 +939,7 @@ backend/
 │   ├── sessions/      # CRUD + messages + session files + promote
 │   ├── chat/          # SSE endpoint + manual tool-use loop + event mapping
 │   ├── kb/            # upload, list, reindex, tags, delete
-│   ├── rag/           # ingestion worker, chunking, FastEmbed (BGE-M3, in-process),
+│   ├── rag/           # ingestion worker, chunking, FlagEmbedding (BGE-M3, in-process),
 │   │                  # Qdrant client, hybrid scoped retrieval (the tool impl)
 │   ├── tools/         # registry + contract; builtin/ (search_kb, execute_code),
 │   │                  # mcp/ (MCPManager: connect, list, wrap, namespace)
@@ -957,7 +960,7 @@ can't read directly — the sandbox fetches and processes them. It's also the
 producer for future artifact/canvas output (charts/files).
 
 **Deployment (fits the locked topology).** The app runs on **Windows + CUDA**
-(FastEmbed-GPU, Surya). Qdrant and the sandbox run in a **CPU Linux VM** via
+(FlagEmbedding on GPU, Surya). Qdrant and the sandbox run in a **CPU Linux VM** via
 Docker (same engine, two isolation domains). The sandbox is a small
 **code-exec service** in that VM; the app reaches it over HTTP.
 
@@ -1063,11 +1066,11 @@ Source: constants in [`src/lib/mock.ts`](../src/lib/mock.ts).
       calls each carry a unique `StepEvent.id`; `MAX_TOOL_ITERATIONS` (default 6)
       forces a final answer when hit; `MAX_PARALLEL_TOOLS` (default 2) caps
       concurrency.
-- [ ] **Retrieval is hybrid:** dense + sparse (BGE-M3 via FastEmbed, in-process)
-      fused with RRF
+- [ ] **Retrieval is hybrid:** dense + sparse (BGE-M3 via FlagEmbedding,
+      in-process) fused with RRF
       under the server-side scope filter; embedding model is pinned (1024-dim
-      dense); reranker (when enabled) is `bge-reranker-v2-m3`, registered in
-      FastEmbed via `add_custom_model`.
+      dense); reranker (when enabled) is `bge-reranker-v2-m3` via FlagEmbedding's
+      `FlagReranker`.
 - [ ] **DB is portable:** SQLite via SQLAlchemy + Alembic + repositories; `tags`
       stored as JSON/child table (not a native array); UUIDs as text; WAL on.
       Engine swap to Postgres/MySQL is a connection-string change.

@@ -11,7 +11,7 @@ this README is just how to run it.
 | API | FastAPI (async SSE) |
 | App data | SQLite now → Postgres/MySQL later (SQLAlchemy + Alembic + repositories) |
 | Vectors | Qdrant (dense + sparse named vectors) |
-| Embeddings / rerank | BGE-M3 + bge-reranker-v2-m3, **in-process** via FastEmbed |
+| Embeddings / rerank | BGE-M3 + bge-reranker-v2-m3, **in-process** via FlagEmbedding (torch/GPU) |
 | Chat LLM | any OpenAI-compatible endpoint (`MODEL_BASE_URL`) — default Qwen on llama-server |
 | Extraction | PyMuPDF (text PDFs) + Surya OCR (scanned) |
 
@@ -28,7 +28,7 @@ cd backend
 cp .env.example .env                      # then edit MODEL_BASE_URL etc.
 uv sync --extra dev                       # foundation (web + db + auth) + test deps
 # later, per area:
-#   uv sync --extra rag --extra llm       # Qdrant + FastEmbed + chat client
+#   uv sync --extra rag --extra llm       # Qdrant + FlagEmbedding (torch) + chat client
 #   uv sync --extra ingest                # PyMuPDF / python-docx (§8.1)
 ```
 
@@ -59,7 +59,7 @@ backend/
 │   ├── sessions/      # CRUD + messages + attachments + session files (§5/§6.1/§8.4)
 │   ├── chat/          # SSE tool-use loop + event mapping (§7)
 │   ├── kb/            # upload/list/reindex/tags/delete (§8.3)
-│   ├── rag/           # ingestion worker, FastEmbed, Qdrant, scoped retrieval (§8)
+│   ├── rag/           # ingestion worker, FlagEmbedding, Qdrant, scoped retrieval (§8)
 │   ├── tools/         # tool registry + builtin (search_kb, execute_code) + mcp (§12.2)
 │   ├── models/        # SQLAlchemy models
 │   └── schemas/       # request/response DTOs (camelCase out)
