@@ -13,7 +13,7 @@ export default defineConfig({
       // can be SameSite=Lax (§2, §4 of the backend spec). In production a
       // reverse proxy does the same.
       "/api": {
-        target: "http://localhost:8012",
+        target: "http://localhost:8000",
         changeOrigin: true,
       },
     },
