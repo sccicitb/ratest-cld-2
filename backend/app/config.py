@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     embed_model: str = "BAAI/bge-m3"
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_enabled: bool = False  # recall-only ships first (§8.5)
+    # Device is auto-detected (cuda → mps → cpu); override here if needed.
+    # Portable across Windows+CUDA, Mac M1 (mps), and CPU.
+    embed_device: str = "auto"  # auto | cuda | mps | cpu
+    embed_use_fp16: bool | None = None  # None = auto (fp16 only on cuda)
 
     # --- Ingress routing (§6) ---
     inline_token_budget: int = 6000          # tokens, not bytes — the real gate

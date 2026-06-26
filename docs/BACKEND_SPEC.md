@@ -622,10 +622,16 @@ Triggered by KB upload, KB reindex, and session-scoped chat ingestion. Steps:
    via Qwen vision, never ingested — §6/§8.3.)
 3. **Chunk** — ~500–1000 tokens, ~10–15% overlap, split on structure.
 4. **Embed** — **BGE-M3** via **FlagEmbedding** (`BGEM3FlagModel`), running
-   **in-process** with torch — no embedding server to host. CPU works; **GPU**
-   via torch CUDA (`use_fp16=True`). One `model.encode(..., return_dense=True,
-   return_sparse=True)` call emits **dense (1024-dim) + sparse** vectors in one
-   pass — store both (§9.2). (BGE-M3 can also emit ColBERT/multi-vectors via
+   **in-process** with torch — no embedding server to host. **Device is
+   auto-detected** (CUDA → MPS → CPU) with a config override (`EMBED_DEVICE`), so
+   the same code runs on Windows+CUDA (dev & prod), Mac M1 (MPS), and CPU. **fp16
+   only on CUDA** (`use_fp16` derived from the resolved device — never hardcode
+   `True`; it's unsupported/slow on MPS/CPU). One `model.encode(...,
+   return_dense=True, return_sparse=True)` call emits **dense (1024-dim) +
+   sparse** vectors in one pass — store both (§9.2).
+   *(Install note: `pip/uv` gives Mac the MPS/CPU torch wheel automatically; on
+   Windows/Linux+CUDA install the CUDA torch wheel from PyTorch's index to use
+   the GPU.)* (BGE-M3 can also emit ColBERT/multi-vectors via
    `return_colbert_vecs`, but v1's reranker is a cross-encoder, so they are
    **not** generated or stored — §8.5.) The **same pinned model** is used for
    indexing and querying — a mismatch silently breaks retrieval. BGE-M3 needs
@@ -854,8 +860,9 @@ session-scoped `kb_files` record → `KnowledgeBaseFile` with `scope: "session"`
 - **BGE-M3** embeddings + **`bge-reranker-v2-m3`** reranker (Apache-2.0,
   Indonesian-capable), both via **FlagEmbedding** (`BGEM3FlagModel` +
   `FlagReranker`), running **in-process** with torch — no embedding/reranker
-  server to host. Pinned, not swappable. **GPU** via torch CUDA (`use_fp16=True`);
-  CPU works for dev. (Promote to a server like TEI/Infinity only if you outgrow
+  server to host. Pinned, not swappable. **Device auto-detects** CUDA → MPS →
+  CPU (`EMBED_DEVICE` override); fp16 only on CUDA — portable across Windows+CUDA,
+  Mac M1, CPU. (Promote to a server like TEI/Infinity only if you outgrow
   in-process throughput.)
 - **Chat LLM via any OpenAI-compatible endpoint** (vLLM / Ollama / TGI /
   llama-server / hosted) + a **manual tool-use loop** (§7). Configured default:
