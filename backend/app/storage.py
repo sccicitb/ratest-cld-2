@@ -49,3 +49,12 @@ def open_blob(storage_key: str) -> BinaryIO:
         raise ValueError(f"invalid storage key: {storage_key!r}")
     path = _blob_dir() / storage_key
     return open(path, "rb")
+
+
+def delete_blob(storage_key: str) -> None:
+    """Remove a stored blob by its storage_key, if present."""
+    if storage_key != os.path.basename(storage_key) or storage_key in ("", ".", ".."):
+        raise ValueError(f"invalid storage key: {storage_key!r}")
+    path = _blob_dir() / storage_key
+    if path.exists():
+        path.unlink()

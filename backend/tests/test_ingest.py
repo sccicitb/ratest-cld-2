@@ -1,0 +1,144 @@
+"""Tests for app.rag.ingest (Task 3.4): extract -> chunk -> embed -> upsert -> status.
+
+One test uses the REAL embedder (module-scoped, loads BGE-M3 once) against a
+real text file to prove the full pipeline end-to-end. The error-path test uses
+a fake embedder since it never reaches the embed step.
+"""
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+from qdrant_client import QdrantClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.db import Base
+from app.models import KBFile, User
+from app.rag.embedder import Embedder, get_embedder
+from app.rag.ingest import ingest
+from app.rag.vectors import search
+
+
+@pytest.fixture(scope="module")
+def embedder() -> Embedder:
+    return get_embedder()
+
+
+@pytest.fixture()
+def qdrant() -> QdrantClient:
+    return QdrantClient(":memory:")
+
+
+@pytest.fixture()
+def db_session(tmp_path, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "blob_dir", str(tmp_path))
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    db = factory()
+    yield db
+    db.close()
+
+
+def _make_user(db) -> User:
+    user = User(email="ingest@example.com", display_name="Ingest Tester", password_hash="x")
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def _make_kb_file(db, user_id: str, storage_key: str, name: str) -> KBFile:
+    file = KBFile(
+        user_id=user_id,
+        scope="kb",
+        session_id=None,
+        name=name,
+        size=100,
+        storage_key=storage_key,
+        status="indexing",
+        chunk_count=0,
+        tags=["alpha"],
+    )
+    db.add(file)
+    db.commit()
+    db.refresh(file)
+    return file
+
+
+async def _collect(agen):
+    out = []
+    async for item in agen:
+        out.append(item)
+    return out
+
+
+def test_ingest_real_pipeline_extracts_chunks_embeds_and_marks_ready(
+    db_session, qdrant: QdrantClient, embedder: Embedder, tmp_path
+):
+    """Real extract -> chunk -> embed -> upsert pipeline on a real .txt file."""
+    from app.config import settings
+
+    storage_key = "doc.txt"
+    text = "Cats are small domesticated carnivorous mammals. " * 50 + "\n\n" + (
+        "Dogs are loyal companions and have been domesticated for millennia. " * 50
+    )
+    (tmp_path / storage_key).write_text(text, encoding="utf-8")
+    assert settings.blob_dir == str(tmp_path)
+
+    user = _make_user(db_session)
+    file = _make_kb_file(db_session, user.id, storage_key, "doc.txt")
+
+    events = asyncio.run(
+        _collect(ingest(db_session, file.id, client=qdrant, embedder=embedder))
+    )
+
+    assert len(events) >= 1
+    for ev in events:
+        assert ev["type"] == "chunk_progress"
+        assert ev["fileName"] == "doc.txt"
+    assert events[-1]["progress"] == 100
+
+    db_session.refresh(file)
+    assert file.status == "ready"
+    assert file.chunk_count > 0
+
+    results = search(
+        qdrant, embedder, query="domesticated carnivorous mammals", user_id=user.id,
+        session_id=None, k=5,
+    )
+    assert any(r["file_id"] == file.id for r in results)
+
+
+class _FakeEmbedder:
+    def embed_passages(self, texts):
+        return [{"dense": [0.1] * 1024, "sparse": {"indices": [1], "values": [1.0]}} for _ in texts]
+
+    def embed_query(self, text):
+        return {"dense": [0.1] * 1024, "sparse": {"indices": [1], "values": [1.0]}}
+
+
+def test_ingest_marks_error_on_extraction_failure(db_session, qdrant: QdrantClient, tmp_path):
+    """Unsupported extension -> extract_text raises ValueError -> status=error."""
+    storage_key = "scan.png"
+    (tmp_path / storage_key).write_bytes(b"\x89PNG fake")
+    user = _make_user(db_session)
+    file = _make_kb_file(db_session, user.id, storage_key, "scan.png")
+
+    fake = _FakeEmbedder()
+
+    with pytest.raises(ValueError):
+        asyncio.run(_collect(ingest(db_session, file.id, client=qdrant, embedder=fake)))
+
+    db_session.refresh(file)
+    assert file.status == "error"
+    assert file.chunk_count == 0
