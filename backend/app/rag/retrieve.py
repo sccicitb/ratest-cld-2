@@ -25,13 +25,22 @@ def retrieve(
     client: QdrantClient,
     embedder: Embedder,
     k: int = 5,
+    tags: list[str] | None = None,
 ) -> list[Chunk]:
     """Scoped hybrid search; reranked on top if `settings.rerank_enabled`."""
     if not settings.rerank_enabled:
-        return search(client, embedder, query=query, user_id=user_id, session_id=session_id, k=k)
+        return search(
+            client, embedder, query=query, user_id=user_id, session_id=session_id, k=k, tags=tags
+        )
 
     recall_k = min(k * _RERANK_RECALL_MULTIPLIER, _RERANK_RECALL_CAP)
     candidates = search(
-        client, embedder, query=query, user_id=user_id, session_id=session_id, k=recall_k
+        client,
+        embedder,
+        query=query,
+        user_id=user_id,
+        session_id=session_id,
+        k=recall_k,
+        tags=tags,
     )
     return rerank(query, candidates, k)

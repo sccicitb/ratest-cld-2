@@ -128,6 +128,56 @@ def test_search_kb_execute_returns_top_chunk_content(
     assert "file-session-1" in result
 
 
+def test_search_kb_execute_filters_by_tags(
+    qdrant: QdrantClient, embedder: Embedder, monkeypatch
+):
+    monkeypatch.setattr("app.rag.retrieve.settings.rerank_enabled", False)
+    ensure_collection(qdrant)
+    user_id = "user-1"
+    chunks = [
+        {
+            "content": "The finance team closed Q1 with strong margins.",
+            "file_id": "file-finance",
+            "chunk_idx": 0,
+            "tags": ["finance"],
+            "user_id": user_id,
+            "scope": "kb",
+            "session_id": None,
+            "status": "ready",
+        },
+        {
+            "content": "The HR team rolled out a new onboarding process.",
+            "file_id": "file-hr",
+            "chunk_idx": 0,
+            "tags": ["hr"],
+            "user_id": user_id,
+            "scope": "kb",
+            "session_id": None,
+            "status": "ready",
+        },
+    ]
+    upsert_chunks(qdrant, embedder, chunks)
+
+    ctx = ToolContext(
+        user_id=user_id,
+        session_id=None,
+        db=None,
+        client=qdrant,
+        embedder=embedder,
+    )
+    tool = SearchKnowledgeBase()
+
+    tagged = asyncio.run(
+        tool.execute({"query": "team process margins", "tags": ["finance"]}, ctx)
+    )
+    assert "file-finance" in tagged
+    assert "file-hr" not in tagged
+
+    untagged = asyncio.run(tool.execute({"query": "team process margins"}, ctx))
+    assert "file-finance" in untagged
+    assert "file-hr" in untagged
+
+
 def test_search_kb_scope_injected_from_ctx_not_args(
     qdrant: QdrantClient, embedder: Embedder, monkeypatch
 ):

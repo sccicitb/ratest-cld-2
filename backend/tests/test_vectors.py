@@ -199,6 +199,42 @@ def test_delete_by_session_removes_points(qdrant: QdrantClient, embedder: Embedd
     assert "file-session-1" not in file_ids
 
 
+def test_search_with_tags_filters_to_matching_chunks(qdrant: QdrantClient, embedder: Embedder):
+    ensure_collection(qdrant)
+    user_id = "user-1"
+    chunks = [
+        {
+            "content": "The finance team closed Q1 with strong margins.",
+            "file_id": "file-finance",
+            "chunk_idx": 0,
+            "tags": ["finance"],
+            "user_id": user_id,
+            "scope": "kb",
+            "session_id": None,
+            "status": "ready",
+        },
+        {
+            "content": "The HR team rolled out a new onboarding process.",
+            "file_id": "file-hr",
+            "chunk_idx": 0,
+            "tags": ["hr"],
+            "user_id": user_id,
+            "scope": "kb",
+            "session_id": None,
+            "status": "ready",
+        },
+    ]
+    upsert_chunks(qdrant, embedder, chunks)
+
+    tagged = search(qdrant, embedder, query="team process margins", user_id=user_id,
+                     session_id=None, k=5, tags=["finance"])
+    assert {r["file_id"] for r in tagged} == {"file-finance"}
+
+    untagged = search(qdrant, embedder, query="team process margins", user_id=user_id,
+                       session_id=None, k=5, tags=None)
+    assert {r["file_id"] for r in untagged} == {"file-finance", "file-hr"}
+
+
 def test_update_file_payload_promotes_session_chunk_to_kb(
     qdrant: QdrantClient, embedder: Embedder
 ):

@@ -43,6 +43,7 @@ class SearchKnowledgeBase:
 
     async def execute(self, args: dict, ctx: ToolContext) -> str:
         query = args["query"]
+        tags = args.get("tags")
         chunks = retrieve(
             query=query,
             user_id=ctx.user_id,
@@ -50,6 +51,7 @@ class SearchKnowledgeBase:
             client=ctx.client,
             embedder=ctx.embedder,
             k=DEFAULT_K,
+            tags=tags,
         )
         if not chunks:
             return "No matching documents found."

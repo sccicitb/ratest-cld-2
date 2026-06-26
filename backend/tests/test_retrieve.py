@@ -142,7 +142,7 @@ def test_retrieve_uses_wider_recall_when_rerank_enabled(
 
     captured_k = {}
 
-    def _fake_search(client, embedder, *, query, user_id, session_id, k=5):
+    def _fake_search(client, embedder, *, query, user_id, session_id, k=5, tags=None):
         captured_k["k"] = k
         return [
             {
@@ -168,6 +168,59 @@ def test_retrieve_uses_wider_recall_when_rerank_enabled(
     )
     assert captured_k["k"] == 30  # k * multiplier
     assert len(out) == 1
+
+
+def test_retrieve_with_tags_filters_to_matching_chunks(
+    qdrant: QdrantClient, embedder: Embedder, monkeypatch
+):
+    monkeypatch.setattr("app.rag.retrieve.settings.rerank_enabled", False)
+    ensure_collection(qdrant)
+    user_id = "user-1"
+    chunks = [
+        {
+            "content": "The finance team closed Q1 with strong margins.",
+            "file_id": "file-finance",
+            "chunk_idx": 0,
+            "tags": ["finance"],
+            "user_id": user_id,
+            "scope": "kb",
+            "session_id": None,
+            "status": "ready",
+        },
+        {
+            "content": "The HR team rolled out a new onboarding process.",
+            "file_id": "file-hr",
+            "chunk_idx": 0,
+            "tags": ["hr"],
+            "user_id": user_id,
+            "scope": "kb",
+            "session_id": None,
+            "status": "ready",
+        },
+    ]
+    upsert_chunks(qdrant, embedder, chunks)
+
+    tagged = retrieve(
+        query="team process margins",
+        user_id=user_id,
+        session_id=None,
+        client=qdrant,
+        embedder=embedder,
+        k=5,
+        tags=["finance"],
+    )
+    assert {r["file_id"] for r in tagged} == {"file-finance"}
+
+    untagged = retrieve(
+        query="team process margins",
+        user_id=user_id,
+        session_id=None,
+        client=qdrant,
+        embedder=embedder,
+        k=5,
+        tags=None,
+    )
+    assert {r["file_id"] for r in untagged} == {"file-finance", "file-hr"}
 
 
 # --- Task 4.4 — rerank ordering (fake reranker, no real weights loaded) -----
