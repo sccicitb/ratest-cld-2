@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import pytest
 
 from app.sse import sse
 from app.storage import open_blob, save_upload
@@ -11,7 +12,7 @@ from app.storage import open_blob, save_upload
 
 
 def test_sse_formats_compact_json_event():
-    assert sse({"a": 1}) == b'data: {"a": 1}\n\n'
+    assert sse({"a": 1}) == b'data: {"a":1}\n\n'
 
 
 def test_sse_returns_bytes():
@@ -74,3 +75,21 @@ def test_save_upload_creates_blob_dir_if_missing(tmp_path, monkeypatch):
     assert missing_dir.exists()
     with open_blob(storage_key) as f:
         assert f.read() == b"x"
+
+
+def test_open_blob_rejects_path_traversal(tmp_path, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "blob_dir", str(tmp_path))
+
+    with pytest.raises(ValueError, match="invalid storage key"):
+        open_blob("../etc/passwd")
+
+    with pytest.raises(ValueError, match="invalid storage key"):
+        open_blob("a/b")
+
+    with pytest.raises(ValueError, match="invalid storage key"):
+        open_blob("")
+
+    with pytest.raises(ValueError, match="invalid storage key"):
+        open_blob(".")

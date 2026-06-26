@@ -6,6 +6,7 @@ is the one place that knows the on-disk layout.
 """
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 from typing import BinaryIO, Protocol
@@ -44,5 +45,7 @@ def save_upload(file: _UploadLike) -> tuple[str, int]:
 
 def open_blob(storage_key: str) -> BinaryIO:
     """Open a stored blob for reading, by its storage_key."""
+    if storage_key != os.path.basename(storage_key) or storage_key in ("", ".", ".."):
+        raise ValueError(f"invalid storage key: {storage_key!r}")
     path = _blob_dir() / storage_key
     return open(path, "rb")
