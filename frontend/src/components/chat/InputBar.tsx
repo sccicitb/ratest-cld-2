@@ -14,20 +14,18 @@ import {
   type PendingAttachment,
 } from "@/components/chat/AttachmentPreview";
 import { useVoiceInput } from "@/hooks/useVoiceInput";
-import { generateId } from "@/lib/mock";
-import { cn, routeChatAttachment, SUPPORTED_FILE_TYPES } from "@/lib/utils";
+import { cn, generateId, routeChatAttachment, SUPPORTED_FILE_TYPES } from "@/lib/utils";
 import type { Attachment } from "@/types/chat";
-
-export interface IngestFile {
-  name: string;
-  size: number;
-}
 
 interface InputBarProps {
   onSend: (
     message: string,
-    attachments: Attachment[],
-    ingestFiles: IngestFile[],
+    inlineAttachments: Attachment[],
+    /** The raw File objects for heavy / ingest-routed attachments.  The
+     *  receiver uploads these via POST /attachments (§6.1) before the
+     *  chat turn so the resolved Attachment record (with authoritative
+     *  `ingested`) arrives before the model sees the message. */
+    ingestFiles: File[],
   ) => void;
   isStreaming: boolean;
   onAbort: () => void;
@@ -102,10 +100,10 @@ export function InputBar({ onSend, isStreaming, onAbort }: InputBarProps) {
       url: "#",
       ingested: true,
     }));
-    const ingestFiles: IngestFile[] = ingest.map((a) => ({
-      name: a.file.name,
-      size: a.file.size,
-    }));
+    // Pass the raw File objects — the receiver uploads them to
+    // POST /sessions/:id/attachments first, then starts the chat turn
+    // with the authority-resolved attachment records.
+    const ingestFiles: File[] = ingest.map((a) => a.file);
     onSend(trimmed, [...inlineAttachments, ...ingestAttachments], ingestFiles);
     setText("");
     setAttachments([]);

@@ -2,8 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { uploadKnowledgeBaseFile } from "@/lib/api";
-import { generateId } from "@/lib/mock";
-import { isValidFileType } from "@/lib/utils";
+import { generateId, isValidFileType } from "@/lib/utils";
 import type { UploadTask, UploadTaskStatus } from "@/types/kb";
 
 const MAX_CONCURRENT = 3;
@@ -28,12 +27,13 @@ export function useFileUpload() {
       activeCount.current++;
       update(id, { status: "uploading", progress: 0 });
       try {
-        await uploadKnowledgeBaseFile(file, (progress, status) => {
-          update(id, {
-            progress,
-            status: status === "uploading" ? "uploading" : "indexing",
-          });
-        });
+        for await (const ev of uploadKnowledgeBaseFile(file)) {
+          if (ev.type === "chunk_progress") {
+            update(id, { progress: ev.progress, status: "indexing" });
+          } else if (ev.type === "file_resolved") {
+            // File is indexed and ready.
+          }
+        }
         update(id, { status: "done", progress: 100 });
         qc.invalidateQueries({ queryKey: ["kb-files"] });
       } catch (err) {
