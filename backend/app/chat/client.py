@@ -11,6 +11,7 @@ and only yields a normalized tool_call `ModelChunk` once the turn completes.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, runtime_checkable
@@ -18,6 +19,8 @@ from typing import Literal, Protocol, runtime_checkable
 from openai import AsyncOpenAI
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -72,9 +75,15 @@ class OpenAIModelClient:
                 yield ModelChunk(type="text", text=delta.content)
 
             for tc in delta.tool_calls or []:
+                is_new = tc.index not in pending
                 slot = pending.setdefault(tc.index, _PendingToolCall())
                 if tc.id:
                     slot.id = tc.id
+                elif is_new:
+                    # Some servers omit `id` on the first fragment; fall back
+                    # to a generated id so the `tool_call_id` echoed back to
+                    # the model (app/chat/loop.py) is never an empty string.
+                    slot.id = f"call_{tc.index}"
                 if tc.function and tc.function.name:
                     slot.name = tc.function.name
                 if tc.function and tc.function.arguments:
@@ -84,6 +93,10 @@ class OpenAIModelClient:
             try:
                 args = json.loads(slot.arguments) if slot.arguments else {}
             except json.JSONDecodeError:
+                logger.warning(
+                    "Tool call %r (id=%s) had non-JSON arguments; treating as {}: %r",
+                    slot.name, slot.id, slot.arguments,
+                )
                 args = {}
             yield ModelChunk(type="tool_call", id=slot.id, name=slot.name, arguments=args)
 
