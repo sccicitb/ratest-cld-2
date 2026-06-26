@@ -52,3 +52,12 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def get_session_factory() -> sessionmaker:
+    """Dependency seam for code (e.g. background tasks) that needs to open its
+    own short-lived session outside the request's `get_db` lifecycle.
+    Overridable in tests alongside `get_db`, so background work lands in the
+    same (test) engine as the request that scheduled it.
+    """
+    return SessionLocal

@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "kb_chunks"
 
+    # --- Blob storage (§8.1): local dir for raw uploaded files ---
+    blob_dir: str = "./data/blobs"
+
     # --- Chat model: any OpenAI-compatible endpoint (§7, §12) ---
     model_base_url: str = "https://llama.sccic.org/v1"
     model_name: str = "qwen"
