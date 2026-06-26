@@ -127,6 +127,16 @@ class _FakeEmbedder:
         return {"dense": [0.1] * 1024, "sparse": {"indices": [1], "values": [1.0]}}
 
 
+class _FailingEmbedder:
+    """Embedder that raises RuntimeError on embed_passages."""
+
+    def embed_passages(self, texts):
+        raise RuntimeError("embedder boom")
+
+    def embed_query(self, text):
+        return {"dense": [0.1] * 1024, "sparse": {"indices": [1], "values": [1.0]}}
+
+
 def test_ingest_marks_error_on_extraction_failure(db_session, qdrant: QdrantClient, tmp_path):
     """Unsupported extension -> extract_text raises ValueError -> status=error."""
     storage_key = "scan.png"
@@ -141,4 +151,23 @@ def test_ingest_marks_error_on_extraction_failure(db_session, qdrant: QdrantClie
 
     db_session.refresh(file)
     assert file.status == "error"
+    assert file.chunk_count == 0
+
+
+def test_ingest_marks_error_on_embed_failure(db_session, qdrant: QdrantClient, tmp_path):
+    """Embedder failure during upsert phase -> status=error (not left at indexing)."""
+    storage_key = "doc.txt"
+    text = "Hello world. " * 100
+    (tmp_path / storage_key).write_text(text, encoding="utf-8")
+
+    user = _make_user(db_session)
+    file = _make_kb_file(db_session, user.id, storage_key, "doc.txt")
+
+    failing = _FailingEmbedder()
+
+    with pytest.raises(RuntimeError, match="embedder boom"):
+        asyncio.run(_collect(ingest(db_session, file.id, client=qdrant, embedder=failing)))
+
+    db_session.refresh(file)
+    assert file.status == "error", f"Expected status='error', got '{file.status}'"
     assert file.chunk_count == 0

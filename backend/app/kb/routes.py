@@ -1,6 +1,7 @@
 """Knowledge-base endpoints (§8.2, §8.3): list/filter, upload (SSE), reindex, tags, delete."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Annotated
 
@@ -20,6 +21,8 @@ from app.rag.vectors import delete_by_file, get_client
 from app.schemas import KnowledgeBaseFileOut
 from app.sse import sse
 from app.storage import delete_blob, save_upload
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -139,7 +142,7 @@ def reindex_file(
         try:
             asyncio.run(_consume())
         except Exception:
-            pass
+            logger.exception("reindex ingest failed for %s", file_id)
 
     background_tasks.add_task(_run)
     return file
