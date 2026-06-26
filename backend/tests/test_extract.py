@@ -1,4 +1,9 @@
-"""Tests for app.rag.extract (Task 3.2): PyMuPDF/docx/text routing + OCR stub."""
+"""Tests for app.rag.extract (Task 3.2 / 3.8): PyMuPDF/docx/text routing + OCR.
+
+Routing tests monkeypatch `app.rag.ocr.ocr_images` with a FAKE OCR so they're
+fast and never load Surya. The one real-Surya proof lives in
+`tests/test_ocr.py`.
+"""
 from __future__ import annotations
 
 import json
@@ -6,6 +11,8 @@ import json
 import pytest
 
 from app.rag.extract import SUPPORTED_KB_TYPES, extract_text
+
+OCR_SENTINEL = "OCR_TEXT"
 
 
 @pytest.fixture()
@@ -31,7 +38,8 @@ def test_extract_text_from_text_layer_pdf(blob_dir):
 
     doc = fitz.open()
     page = doc.new_page()
-    page.insert_text((72, 72), "Hello extract test")
+    # Enough text to clear the OCR density threshold (ocr_min_chars_per_page).
+    page.insert_text((72, 72), "Hello extract test. " * 10)
     pdf_path = blob_dir / "sample.pdf"
     doc.save(str(pdf_path))
     doc.close()
@@ -40,19 +48,79 @@ def test_extract_text_from_text_layer_pdf(blob_dir):
     assert "Hello extract test" in text
 
 
-def test_extract_text_from_scanned_pdf_raises_not_implemented(blob_dir):
+def _make_pdf(blob_dir, name: str, *, with_text: bool) -> None:
     import fitz
 
     doc = fitz.open()
     page = doc.new_page()
-    # Draw a rectangle only — no text layer at all (simulates a scanned page).
-    page.draw_rect(fitz.Rect(10, 10, 100, 100))
-    pdf_path = blob_dir / "scanned.pdf"
-    doc.save(str(pdf_path))
+    if with_text:
+        # Enough text to clear the OCR density threshold (ocr_min_chars_per_page).
+        page.insert_text((72, 72), "Hello extract test. " * 10)
+    else:
+        # Draw a rectangle only — no text layer at all (simulates a scanned page).
+        page.draw_rect(fitz.Rect(10, 10, 100, 100))
+    doc.save(str(blob_dir / name))
     doc.close()
 
-    with pytest.raises(NotImplementedError):
-        extract_text("scanned.pdf", "scanned.pdf")
+
+def test_extract_text_from_scanned_pdf_routes_to_ocr(blob_dir, monkeypatch):
+    calls: list[list] = []
+
+    def fake_ocr_images(images):
+        calls.append(images)
+        return [OCR_SENTINEL for _ in images]
+
+    # _ocr_pdf imports ocr_images locally, so patch where it's looked up.
+    import app.rag.ocr as ocr_module
+
+    monkeypatch.setattr(ocr_module, "ocr_images", fake_ocr_images)
+
+    _make_pdf(blob_dir, "scanned.pdf", with_text=False)
+
+    text = extract_text("scanned.pdf", "scanned.pdf")
+    assert text == OCR_SENTINEL
+    assert len(calls) == 1
+    assert len(calls[0]) == 1  # one page, one image
+
+
+def test_extract_text_from_normal_pdf_does_not_call_ocr(blob_dir, monkeypatch):
+    calls: list[list] = []
+
+    def fake_ocr_images(images):
+        calls.append(images)
+        return [OCR_SENTINEL for _ in images]
+
+    import app.rag.ocr as ocr_module
+
+    monkeypatch.setattr(ocr_module, "ocr_images", fake_ocr_images)
+
+    _make_pdf(blob_dir, "normal.pdf", with_text=True)
+
+    text = extract_text("normal.pdf", "normal.pdf")
+    assert "Hello extract test" in text
+    assert calls == []
+
+
+def test_extract_text_scanned_pdf_with_ocr_disabled_returns_thin_text(blob_dir, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "ocr_enabled", False)
+
+    calls: list[list] = []
+
+    def fake_ocr_images(images):
+        calls.append(images)
+        return [OCR_SENTINEL for _ in images]
+
+    import app.rag.ocr as ocr_module
+
+    monkeypatch.setattr(ocr_module, "ocr_images", fake_ocr_images)
+
+    _make_pdf(blob_dir, "scanned.pdf", with_text=False)
+
+    text = extract_text("scanned.pdf", "scanned.pdf")
+    assert text == ""  # no text layer at all, and OCR is disabled
+    assert calls == []
 
 
 def test_extract_text_from_docx(blob_dir):

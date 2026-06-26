@@ -1,15 +1,16 @@
 """Document text extraction (§8.1): PyMuPDF + python-docx + plain text.
 
-Routing is by filename extension. PDFs go through PyMuPDF; if the extracted
-text is empty/whitespace-only (a scanned/image-only PDF with no text layer),
-we route to `_ocr()` — currently a stub, since Surya OCR is a deferred task
-(Task 3.8). `.doc` (legacy binary Word) needs a LibreOffice conversion step
-that isn't wired here, so it raises a clear, actionable error.
+Routing is by filename extension. PDFs go through PyMuPDF first; we measure
+the text layer's density and route to Surya OCR (`app.rag.ocr`) only when
+it's thin/absent — a real text PDF never pays for OCR (§6). `.doc` (legacy
+binary Word) needs a LibreOffice conversion step that isn't wired here, so
+it raises a clear, actionable error.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
+from app.config import settings
 from app.storage import open_blob
 
 SUPPORTED_KB_TYPES = {".pdf", ".md", ".txt", ".docx", ".doc", ".csv", ".json"}
@@ -17,9 +18,26 @@ SUPPORTED_KB_TYPES = {".pdf", ".md", ".txt", ".docx", ".doc", ".csv", ".json"}
 _TEXT_EXTENSIONS = {".md", ".txt", ".csv", ".json"}
 
 
-def _ocr(storage_key: str) -> str:
-    """OCR fallback for scanned/image-only PDFs — not wired yet (Task 3.8)."""
-    raise NotImplementedError("OCR (Surya) not wired yet — scanned PDF")
+def _is_thin(text: str, page_count: int) -> bool:
+    """A page is "thin" if its text layer averages below the configured floor."""
+    if page_count == 0:
+        return True
+    return (len(text) / page_count) < settings.ocr_min_chars_per_page
+
+
+def _ocr_pdf(doc) -> str:
+    """Render every page to an image and OCR it via Surya."""
+    from PIL import Image
+
+    from app.rag.ocr import ocr_images
+
+    images = []
+    for page in doc:
+        pix = page.get_pixmap(dpi=150)
+        images.append(Image.frombytes("RGB", [pix.width, pix.height], pix.samples))
+
+    page_texts = ocr_images(images)
+    return "\n".join(page_texts)
 
 
 def _extract_pdf(storage_key: str) -> str:
@@ -31,12 +49,15 @@ def _extract_pdf(storage_key: str) -> str:
     doc = fitz.open(stream=data, filetype="pdf")
     try:
         text = "\n".join(page.get_text() for page in doc)
+
+        if _is_thin(text, doc.page_count) and settings.ocr_enabled:
+            return _ocr_pdf(doc)
+        # OCR disabled (or text was dense enough): surface whatever PyMuPDF
+        # found rather than raising — a thin text layer is still useful for
+        # search, and a hard failure here would block ingestion entirely.
+        return text
     finally:
         doc.close()
-
-    if not text.strip():
-        return _ocr(storage_key)
-    return text
 
 
 def _extract_docx(storage_key: str) -> str:
