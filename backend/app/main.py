@@ -5,6 +5,7 @@ Health check: GET /api/health
 
 Routers are added per docs/BACKEND_SPEC.md as each area is implemented.
 """
+
 from __future__ import annotations
 
 from fastapi import FastAPI
@@ -15,6 +16,7 @@ from app.config import settings
 app = FastAPI(title="RAG Chat API", version="0.1.0")
 
 from app.errors import register_error_handlers  # noqa: E402
+
 register_error_handlers(app)
 
 # In production the SPA and API share an origin behind a reverse proxy, so CORS
@@ -37,10 +39,12 @@ def health() -> dict[str, str]:
 # --- Routers (implemented per docs/BACKEND_SPEC.md) -------------------------
 from app.auth.routes import router as auth_router  # noqa: E402
 from app.sessions.routes import router as sessions_router  # noqa: E402
+from app.sessions.attachments import router as attachments_router  # noqa: E402
 from app.kb.routes import router as kb_router  # noqa: E402
 from app.chat.routes import router as chat_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
+app.include_router(attachments_router, prefix="/api/sessions", tags=["attachments"])
 app.include_router(kb_router, prefix="/api/knowledge-base", tags=["kb"])
 app.include_router(chat_router, prefix="/api/sessions", tags=["chat"])

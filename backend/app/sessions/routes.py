@@ -1,14 +1,23 @@
 """Sessions & messages endpoints (§5). All scoped to the authenticated user."""
+
 from __future__ import annotations
 
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Depends
+from qdrant_client import QdrantClient
 
 from app.auth.deps import CurrentUser, DbSession
 from app.errors import ApiError
-from app.models import ChatSession, Message
+from app.kb.routes import get_qdrant
+from app.models import ChatSession, KBFile, Message
+from app.rag.vectors import delete_by_session
 from app.schemas import MessageOut, RenameSessionRequest, SessionOut
+from app.storage import delete_blob
 
 router = APIRouter()
+
+QdrantDep = Annotated[QdrantClient, Depends(get_qdrant)]
 
 
 def _owned(db: DbSession, user_id: str, session_id: str) -> ChatSession:
@@ -55,10 +64,18 @@ def rename_session(
 
 
 @router.delete("/{session_id}", status_code=204)
-def delete_session(session_id: str, user: CurrentUser, db: DbSession) -> None:
+def delete_session(session_id: str, user: CurrentUser, db: DbSession, client: QdrantDep) -> None:
     s = _owned(db, user.id, session_id)
-    # NOTE: cascades messages/attachments via FK. Session-scoped Qdrant points
-    # + kb_files are removed here too once retrieval lands (§8.2).
+    # §8.2 ordering: purge Qdrant points first, then cascade rows.
+    delete_by_session(client, session_id)
+    # Clean up blobs for session-scoped KB files before the rows cascade.
+    for kbf in (
+        db.query(KBFile).filter(KBFile.session_id == session_id, KBFile.scope == "session").all()
+    ):
+        try:
+            delete_blob(kbf.storage_key)
+        except Exception:
+            pass
     db.delete(s)
     db.commit()
 

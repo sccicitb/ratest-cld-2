@@ -1,5 +1,11 @@
 """Sessions & messages endpoint tests (§5)."""
+
 from __future__ import annotations
+
+from qdrant_client import QdrantClient
+
+from app.chat.routes import get_qdrant
+from app.main import app
 
 
 def test_health(client):
@@ -11,34 +17,38 @@ def test_sessions_require_auth(client):
 
 
 def test_create_list_get_rename_delete(client, auth_headers):
-    # create
-    r = client.post("/api/sessions", headers=auth_headers)
-    assert r.status_code == 201, r.text
-    sid = r.json()["id"]
-    assert r.json()["title"] == "New Chat"
+    # Stage 6: delete_session now needs a Qdrant client. Override with
+    # an in-memory instance so the delete call doesn't hit localhost:6333.
+    app.dependency_overrides[get_qdrant] = lambda: QdrantClient(location=":memory:")
+    try:
+        # create
+        r = client.post("/api/sessions", headers=auth_headers)
+        assert r.status_code == 201, r.text
+        sid = r.json()["id"]
+        assert r.json()["title"] == "New Chat"
 
-    # list
-    r = client.get("/api/sessions", headers=auth_headers)
-    assert r.status_code == 200
-    assert [s["id"] for s in r.json()] == [sid]
+        # list
+        r = client.get("/api/sessions", headers=auth_headers)
+        assert r.status_code == 200
+        assert [s["id"] for s in r.json()] == [sid]
 
-    # get
-    assert client.get(f"/api/sessions/{sid}", headers=auth_headers).status_code == 200
+        # get
+        assert client.get(f"/api/sessions/{sid}", headers=auth_headers).status_code == 200
 
-    # rename
-    r = client.patch(
-        f"/api/sessions/{sid}", headers=auth_headers, json={"title": "Renamed"}
-    )
-    assert r.status_code == 200
-    assert r.json()["title"] == "Renamed"
+        # rename
+        r = client.patch(f"/api/sessions/{sid}", headers=auth_headers, json={"title": "Renamed"})
+        assert r.status_code == 200
+        assert r.json()["title"] == "Renamed"
 
-    # messages (empty)
-    r = client.get(f"/api/sessions/{sid}/messages", headers=auth_headers)
-    assert r.status_code == 200 and r.json() == []
+        # messages (empty)
+        r = client.get(f"/api/sessions/{sid}/messages", headers=auth_headers)
+        assert r.status_code == 200 and r.json() == []
 
-    # delete
-    assert client.delete(f"/api/sessions/{sid}", headers=auth_headers).status_code == 204
-    assert client.get(f"/api/sessions/{sid}", headers=auth_headers).status_code == 404
+        # delete
+        assert client.delete(f"/api/sessions/{sid}", headers=auth_headers).status_code == 204
+        assert client.get(f"/api/sessions/{sid}", headers=auth_headers).status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_qdrant, None)
 
 
 def test_list_sorted_by_updated_desc(client, auth_headers):
@@ -55,9 +65,7 @@ def test_cannot_access_another_users_session(client, auth_headers, session_facto
     from app.models import ChatSession, User
 
     db = session_factory()
-    other = User(
-        email="other@example.com", display_name="Other", password_hash=hash_password("x")
-    )
+    other = User(email="other@example.com", display_name="Other", password_hash=hash_password("x"))
     db.add(other)
     db.flush()
     other_session = ChatSession(user_id=other.id, title="secret")
