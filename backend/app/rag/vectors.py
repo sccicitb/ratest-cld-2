@@ -113,9 +113,12 @@ def search(
     user_id: str,
     session_id: str | None,
     k: int = 5,
+    tags: list[str] | None = None,
 ) -> list[Chunk]:
     emb = embedder.embed_query(query)
     scope_filter = _scope_filter(user_id=user_id, session_id=session_id)
+    if tags:
+        scope_filter.must.append(qm.FieldCondition(key="tags", match=qm.MatchAny(any=tags)))
     res = client.query_points(
         COLLECTION,
         prefetch=[
