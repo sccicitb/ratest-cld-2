@@ -1,3 +1,5 @@
+import type { KnowledgeBaseFile } from "./kb";
+
 export interface Session {
   id: string;
   title: string;
@@ -82,3 +84,26 @@ export type StreamEvent =
   | ChunkProgressEvent
   | DoneEvent
   | ErrorEvent;
+
+// --- Upload-stream events (§3 of the backend spec) — separate vocabulary ---
+// These come from the multipart→SSE upload endpoints (attachment upload §6.1
+// and KB upload §8.3), NOT from the chat SSE stream. They share
+// `ChunkProgressEvent` with the chat union above but have their own terminal
+// events.
+
+export interface AttachmentResolvedEvent {
+  type: "attachment_resolved";
+  attachment: Attachment;
+}
+
+export interface FileResolvedEvent {
+  type: "file_resolved";
+  file: KnowledgeBaseFile;
+}
+
+export type UploadStreamEvent =
+  | ChunkProgressEvent
+  | AttachmentResolvedEvent
+  | FileResolvedEvent
+  | { type: "done" }
+  | { type: "error"; message: string };

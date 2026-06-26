@@ -6,7 +6,7 @@ import { Database, Loader2 } from "lucide-react";
 
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { StepTracker } from "@/components/chat/StepTracker";
-import { InputBar, type IngestFile } from "@/components/chat/InputBar";
+import { InputBar } from "@/components/chat/InputBar";
 import { SourcesDrawer } from "@/components/chat/SourcesDrawer";
 import { ChunkingProgress } from "@/components/chat/ChunkingProgress";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,7 @@ export default function ChatRoute() {
   const { data: messages, isLoading } = useMessages(sessionId);
   const { sendMessage, isStreaming, steps, streamedContent, reset, abort } =
     useStreamChat(sessionId);
-  const { ingest, tasks: ingestTasks } = useSessionIngestion(sessionId);
+  const { upload, tasks: ingestTasks } = useSessionIngestion(sessionId);
   const [sourcesOpen, setSourcesOpen] = useState(false);
 
   const { scrollRef, scrollToBottom } = useAutoScroll(
@@ -35,15 +35,20 @@ export default function ChatRoute() {
     reset();
   }, [sessionId, reset]);
 
-  const handleSend = (
+  const handleSend = async (
     message: string,
-    attachments: Attachment[],
-    ingestFiles: IngestFile[],
+    inlineAttachments: Attachment[],
+    ingestFiles: File[],
   ) => {
-    // Heavy attachments are ingested session-scoped (shown inline as chunking
-    // progress); the message itself streams concurrently.
-    if (ingestFiles.length > 0) void ingest(ingestFiles);
-    void sendMessage(message, attachments);
+    // §6.1: upload heavy attachments first (multipart → SSE).  The stream sprays
+    // chunk_progress into the feed while we wait, then yields the authoritative
+    // Attachment records with the real `ingested` flag set by the backend.
+    let resolved: Attachment[] = [];
+    if (ingestFiles.length > 0) {
+      resolved = await upload(ingestFiles);
+    }
+    // Now the chat turn — all attachments (inline + resolved ingest) are attached.
+    void sendMessage(message, [...inlineAttachments, ...resolved]);
     requestAnimationFrame(() => scrollToBottom());
   };
 

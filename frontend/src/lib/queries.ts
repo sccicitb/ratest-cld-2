@@ -70,6 +70,13 @@ export function useKnowledgeBaseFiles(filters?: KBFilters) {
   return useQuery({
     queryKey: queryKeys.kbFiles(filters),
     queryFn: () => api.getKnowledgeBaseFiles(filters),
+    // Poll while any file is indexing (§8.3: "poll-while-indexing").
+    refetchInterval: (query) => {
+      const files = query.state.data as { status?: string }[] | undefined;
+      if (!files || files.length === 0) return false;
+      const anyIndexing = files.some((f) => f.status === "indexing");
+      return anyIndexing ? 2500 : false;
+    },
   });
 }
 
