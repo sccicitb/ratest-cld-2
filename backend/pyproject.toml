@@ -22,6 +22,9 @@ dependencies = [
 rag = [
     "qdrant-client>=1.11",        # vector store (§9.2)
     "FlagEmbedding>=1.2",        # BGE-M3 embeddings + bge-reranker-v2-m3, in-process
+    # Pin transformers to the last 4.x: surya-ocr 0.17 (ingest extra) breaks on
+    # transformers 5.x (config.pad_token_id), and FlagEmbedding accepts 4.56.x.
+    "transformers>=4.56.1,<5",
 ]
 # OpenAI-compatible chat client → MODEL_BASE_URL (§7).
 llm = [
@@ -32,7 +35,8 @@ llm = [
 ingest = [
     "pymupdf>=1.24",
     "python-docx>=1.1",
-    # "surya-ocr>=0.6",
+    "surya-ocr>=0.6",            # OCR for scanned/image PDFs (§6/§8.1, Task 3.8)
+    "transformers>=4.56.1,<5",  # surya-ocr 0.17 needs 4.x (see rag extra note)
 ]
 # MCP tools (satudata, §12.2) — install when wiring external tools.
 mcp = [
