@@ -6,6 +6,7 @@ denormalizes the scope payload (`user_id`, `scope`, `session_id`, `status`,
 ...) so the security boundary lives in a single filter applied at search
 time — see `_scope_filter`.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -149,13 +150,15 @@ def delete_by_file(client: QdrantClient, file_id: str) -> None:
 
 
 def delete_by_session(client: QdrantClient, session_id: str) -> None:
+    """Remove all points belonging to `session_id`. Safe to call even when the
+    collection hasn't been created yet (no ingested files)."""
+    if not client.collection_exists(COLLECTION):
+        return
     client.delete(
         COLLECTION,
         points_selector=qm.FilterSelector(
             filter=qm.Filter(
-                must=[
-                    qm.FieldCondition(key="session_id", match=qm.MatchValue(value=session_id))
-                ]
+                must=[qm.FieldCondition(key="session_id", match=qm.MatchValue(value=session_id))]
             )
         ),
     )
