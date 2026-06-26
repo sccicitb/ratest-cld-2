@@ -6,9 +6,9 @@
 
 **Goal:** Implement the self-hosted RAG backend defined in [`docs/BACKEND_SPEC.md`](../../BACKEND_SPEC.md) (status: LOCKED) so the existing React frontend works end-to-end against it.
 
-**Architecture:** FastAPI app; SQLAlchemy/SQLite app DB for relational data; Qdrant for chunk vectors; FastEmbed (BGE-M3) in-process for embeddings + rerank; any OpenAI-compatible endpoint for the chat model, driven by a hand-written tool-use loop that streams SSE `StreamEvent`s. Retrieval is an agentic tool (`search_knowledge_base`) with scope injected server-side.
+**Architecture:** FastAPI app; SQLAlchemy/SQLite app DB for relational data; Qdrant for chunk vectors; FlagEmbedding (BGE-M3) in-process for embeddings + rerank; any OpenAI-compatible endpoint for the chat model, driven by a hand-written tool-use loop that streams SSE `StreamEvent`s. Retrieval is an agentic tool (`search_knowledge_base`) with scope injected server-side.
 
-**Tech Stack:** Python ≥3.10 · uv · FastAPI · SQLAlchemy 2 + Alembic · Qdrant (`qdrant-client`) · FastEmbed · OpenAI SDK (pointed at `MODEL_BASE_URL`) · PyMuPDF/Surya (extraction).
+**Tech Stack:** Python ≥3.10 · uv · FastAPI · SQLAlchemy 2 + Alembic · Qdrant (`qdrant-client`) · FlagEmbedding (BGE-M3, torch) · OpenAI SDK (pointed at `MODEL_BASE_URL`) · PyMuPDF/Surya (extraction).
 
 ## Global Constraints
 
@@ -20,7 +20,7 @@ Every task implicitly includes these (copied from the spec):
 - **Timestamps: ISO-8601 UTC** (`...Z`) — Stage 1 makes naive SQLite datetimes serialize correctly.
 - **SSE** endpoints return `text/event-stream`: one JSON event per `data:` line, blank line between events, stream closed after the terminal event. Disable proxy buffering; emit errors as a final event, never an HTTP error mid-stream.
 - **Chat model is model-agnostic**: OpenAI-compatible `/v1/chat/completions` (`messages` + `tools`; read `tool_calls`; reply `role:"tool"` + `tool_call_id`). No vendor SDK in the loop logic. Default `MODEL_BASE_URL=https://llama.sccic.org/v1`.
-- **Embeddings pinned**: BGE-M3, **dense 1024-dim (Cosine) + sparse**, in-process FastEmbed. Same model for index + query. **Never swap** (re-index otherwise).
+- **Embeddings pinned**: BGE-M3, **dense 1024-dim (Cosine) + sparse**, in-process via **FlagEmbedding** (`BGEM3FlagModel`; torch/GPU) — dense+sparse in one `encode()`. Same model for index + query. **Never swap** (re-index otherwise).
 - **One Qdrant collection** `kb_chunks`; scope fields **denormalized onto every point's payload** (`user_id, scope, session_id, status`); payload-indexed.
 - **App DB**: SQLAlchemy + Alembic + repository pattern; `tags` as JSON (not native array); UUIDs as text; SQLite WAL.
 - **Scope filter (the security boundary):** `user_id == caller` AND `status == "ready"` AND (`scope == "kb"` OR (`scope == "session"` AND `session_id == current_session`)). Injected server-side; the model never supplies it.
@@ -33,7 +33,7 @@ Every task implicitly includes these (copied from the spec):
 |---|---|---|---|---|
 | **0** | Foundation: models/migrations, auth, sessions | — | — | §4,§5,§9.1 ✅ **DONE** |
 | **1** | Cross-cutting fixes: error envelope + UTC timestamps | S | 0 | §2 |
-| **2** | Vector infra: FastEmbed embedder + Qdrant collection/upsert/search | M | 1 | §8.1,§8.5,§9.2 |
+| **2** | Vector infra: FlagEmbedding (BGE-M3) embedder + Qdrant collection/upsert/search | M | 1 | §8.1,§8.5,§9.2 |
 | **3** | Ingestion pipeline + KB endpoints (upload→indexed→listed) | L | 2 | §8.1,§8.3 |
 | **4** | Retrieval + tool registry + `search_knowledge_base` | M | 3 | §7,§8.5 |
 | **5** | Chat SSE tool-use loop (the RAG experience) | L | 4 | §7 |
@@ -209,9 +209,11 @@ git commit -m "backend: error envelope {message,code} + UTC timestamp serializat
 
 ## Stage 2 — Vector infra (M)
 
-**Goal:** A FastEmbed embedder and a Qdrant gateway that can bootstrap the collection, upsert chunks with denormalized scope payload, run a scoped hybrid search, and delete/update by file/session. Pure infra — no HTTP.
+**Goal:** A FlagEmbedding (BGE-M3) embedder and a Qdrant gateway that can bootstrap the collection, upsert chunks with denormalized scope payload, run a scoped hybrid search, and delete/update by file/session. Pure infra — no HTTP.
 
-**Setup:** `cd backend && uv sync --extra rag`. Tests use Qdrant **local mode** (`QdrantClient(":memory:")`) — no server needed. (`docker compose up -d qdrant` for manual runs.)
+**Setup:** `cd backend && uv sync --extra rag` (installs `FlagEmbedding` + torch — heavy; first `encode()` downloads BGE-M3 weights). Tests use Qdrant **local mode** (`QdrantClient(":memory:")`) — no server needed. (`docker compose up -d qdrant` for manual runs.)
+
+> **Library note (corrected):** embeddings run via **FlagEmbedding** (`BGEM3FlagModel`), **not** Qdrant's FastEmbed — FastEmbed is ONNX-only and does not ship BGE-M3. FlagEmbedding *is* BGE-M3 and returns dense+sparse in one pass. **Task 2.1 must first smoke-test this** (install + one `encode` returning dense len 1024 + non-empty sparse) before building the wrapper.
 
 **Files:**
 - Create: `backend/app/rag/embedder.py`
@@ -273,7 +275,7 @@ return [p.payload for p in res.points]
 ```
 
 **Tasks (each: write test → run-fail → implement → run-pass → commit):**
-- [ ] **Task 2.1 — Embedder.** Test: `embed_query("hello")` returns dense len 1024 + non-empty sparse; `embed_passages` batches. Implement the FastEmbed BGE-M3 wrapper + singleton.
+- [ ] **Task 2.1 — Embedder.** Test: `embed_query("hello")` returns dense len 1024 + non-empty sparse; `embed_passages` batches. Implement the **FlagEmbedding** wrapper + process-singleton. **Resolve the device first** (helper: `EMBED_DEVICE` override, else `cuda` if `torch.cuda.is_available()`, else `mps` if `torch.backends.mps.is_available()`, else `cpu`; `use_fp16 = (device == "cuda")` unless `EMBED_USE_FP16` set). Construct `BGEM3FlagModel("BAAI/bge-m3", use_fp16=fp16, devices=device)` (param name is `devices` in current FlagEmbedding, `device` in older — the smoke test pins it), call `model.encode(texts, return_dense=True, return_sparse=True)`; map each result to `Embedding{dense: list[float], sparse: {indices, values}}` (BGE-M3's `lexical_weights` → Qdrant sparse `indices`/`values`). **Do not hardcode `use_fp16=True`** — it breaks on Mac M1 (MPS/CPU).
 - [ ] **Task 2.2 — Collection bootstrap.** Test: `ensure_collection` is idempotent (call twice; collection exists with `dense`+`sparse`). Implement.
 - [ ] **Task 2.3 — Upsert + scoped search round-trip.** Test: upsert 3 chunks (2 `kb`, 1 `session` for session S) for user U; `search(query, user_id=U, session_id=S)` returns matches; `search(... session_id="other")` excludes the session chunk; `search(user_id="other")` returns nothing. Implement upsert + search.
 - [ ] **Task 2.4 — Delete + payload update.** Test: `delete_by_file` removes a file's points; `update_file_payload(file_id, {"scope":"kb","session_id":None})` flips them (verify via search scope). Implement.
@@ -335,7 +337,7 @@ async def ingest(db, file_id: str) -> AsyncIterator[dict]
 
 **Goal:** A `search_knowledge_base` tool that takes a query, runs the scoped hybrid search (Stage 2), optionally reranks, and returns top-k chunks — with scope injected from server-side context, never the model.
 
-**Setup:** rerank uses FastEmbed `TextCrossEncoder` with `BAAI/bge-reranker-v2-m3` via `add_custom_model` (behind `settings.rerank_enabled`, default False).
+**Setup:** rerank uses **FlagEmbedding** `FlagReranker("BAAI/bge-reranker-v2-m3", use_fp16=True)` → `.compute_score([[query, passage], ...])` (behind `settings.rerank_enabled`, default False).
 
 **Files:**
 - Create: `backend/app/rag/retrieve.py` — `retrieve(query, *, user_id, session_id, k) -> list[Chunk]` (search → optional rerank).

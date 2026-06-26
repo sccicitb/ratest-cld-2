@@ -1,7 +1,7 @@
 [project]
 name = "rag-chat-backend"
 version = "0.1.0"
-description = "Self-hosted RAG chat backend (FastAPI + Qdrant + FastEmbed). See docs/BACKEND_SPEC.md."
+description = "Self-hosted RAG chat backend (FastAPI + Qdrant + FlagEmbedding). See docs/BACKEND_SPEC.md."
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115",
@@ -17,9 +17,11 @@ dependencies = [
 
 [project.optional-dependencies]
 # Vector store + in-process embeddings/rerank — install for retrieval/ingestion.
+# FlagEmbedding pulls torch (heavy); GPU via torch CUDA. NOT FastEmbed — that's
+# ONNX-only and does not ship BGE-M3 (§8.1/§8.5).
 rag = [
     "qdrant-client>=1.11",        # vector store (§9.2)
-    "fastembed>=0.3",            # BGE-M3 embeddings + reranker, in-process (§8.1/§8.5)
+    "FlagEmbedding>=1.2",        # BGE-M3 embeddings + bge-reranker-v2-m3, in-process
 ]
 # OpenAI-compatible chat client → MODEL_BASE_URL (§7).
 llm = [
@@ -46,3 +48,8 @@ package = false
 
 [tool.ruff]
 line-length = 100
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:Payload indexes have no effect in the local Qdrant.*:UserWarning",
+]
