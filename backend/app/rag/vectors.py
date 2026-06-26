@@ -81,24 +81,26 @@ def upsert_chunks(client: QdrantClient, embedder: Embedder, chunks: list[Chunk])
 
 
 def _scope_filter(*, user_id: str, session_id: str | None) -> qm.Filter:
-    """The security boundary: owner + ready + (kb OR matching-session)."""
+    """The security boundary: owner + ready + (kb OR matching-session).
+
+    When session_id is None (pure KB query), the filter only permits scope=kb.
+    When session_id is provided, the filter permits scope=kb OR (scope=session AND matching session_id).
+    """
+    should = [qm.FieldCondition(key="scope", match=qm.MatchValue(value="kb"))]
+    if session_id is not None:
+        should.append(
+            qm.Filter(
+                must=[
+                    qm.FieldCondition(key="scope", match=qm.MatchValue(value="session")),
+                    qm.FieldCondition(key="session_id", match=qm.MatchValue(value=session_id)),
+                ]
+            )
+        )
     return qm.Filter(
         must=[
             qm.FieldCondition(key="user_id", match=qm.MatchValue(value=user_id)),
             qm.FieldCondition(key="status", match=qm.MatchValue(value="ready")),
-            qm.Filter(
-                should=[
-                    qm.FieldCondition(key="scope", match=qm.MatchValue(value="kb")),
-                    qm.Filter(
-                        must=[
-                            qm.FieldCondition(key="scope", match=qm.MatchValue(value="session")),
-                            qm.FieldCondition(
-                                key="session_id", match=qm.MatchValue(value=session_id or "")
-                            ),
-                        ]
-                    ),
-                ]
-            ),
+            qm.Filter(should=should),
         ]
     )
 

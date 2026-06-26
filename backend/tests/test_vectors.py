@@ -145,6 +145,27 @@ def test_search_returns_nothing_for_different_user(qdrant: QdrantClient, embedde
     assert results == []
 
 
+def test_search_with_session_id_none_returns_kb_chunks_only(
+    qdrant: QdrantClient, embedder: Embedder
+):
+    """When session_id=None, KB chunks are returned but session chunks are excluded."""
+    ensure_collection(qdrant)
+    user_id = "user-1"
+    session_id = "session-1"
+    chunks = _make_chunks(user_id, session_id)
+    upsert_chunks(qdrant, embedder, chunks)
+
+    # Query with session_id=None; should get KB chunks but NOT session chunk
+    results = search(qdrant, embedder, query="cats domesticated mammals",
+                      user_id=user_id, session_id=None, k=5)
+    file_ids = {r["file_id"] for r in results}
+
+    # KB chunks should be returned
+    assert "file-kb-1" in file_ids or "file-kb-2" in file_ids
+    # Session chunk must NOT be returned (the security fix: no empty-string match leak)
+    assert "file-session-1" not in file_ids
+
+
 # --- Task 2.4 — Delete + payload update -------------------------------------
 
 
