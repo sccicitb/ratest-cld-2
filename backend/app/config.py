@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     inline_token_budget: int = 6000          # tokens, not bytes — the real gate
     max_upload_bytes: int = 100 * 1024 * 1024  # sanity ceiling (§11)
 
+    # --- OCR (§6, §8.1): Surya, in-process, only for thin/absent text layers ---
+    ocr_enabled: bool = True
+    ocr_min_chars_per_page: int = 100  # below this average, treat the PDF as scanned
+
     # --- Auth (§4, §10) ---
     jwt_secret: str = "dev-secret-change-me-please-32-bytes-minimum"
     access_token_ttl_minutes: int = 15
