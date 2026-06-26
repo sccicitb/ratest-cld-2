@@ -38,11 +38,9 @@ def health() -> dict[str, str]:
 from app.auth.routes import router as auth_router  # noqa: E402
 from app.sessions.routes import router as sessions_router  # noqa: E402
 from app.kb.routes import router as kb_router  # noqa: E402
+from app.chat.routes import router as chat_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(kb_router, prefix="/api/knowledge-base", tags=["kb"])
-
-# Pending (next slices):
-# from app.chat.routes import router as chat_router      # §7
-# app.include_router(chat_router, prefix="/api/sessions", tags=["chat"])
+app.include_router(chat_router, prefix="/api/sessions", tags=["chat"])
