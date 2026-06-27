@@ -35,20 +35,17 @@ export default function ChatRoute() {
     reset();
   }, [sessionId, reset]);
 
-  const handleSend = async (
-    message: string,
-    inlineAttachments: Attachment[],
-    ingestFiles: File[],
-  ) => {
-    // §6.1: upload heavy attachments first (multipart → SSE).  The stream sprays
-    // chunk_progress into the feed while we wait, then yields the authoritative
-    // Attachment records with the real `ingested` flag set by the backend.
+  const handleSend = async (message: string, files: File[]) => {
+    // §6.1: upload every attachment first (multipart → SSE).  The backend
+    // authoritatively routes each file inline-vs-ingest, streams chunk_progress
+    // for the heavy ones, and yields the resolved Attachment records (real id,
+    // url, and `ingested` flag).  We send those with the chat turn so the bubble
+    // renders their chips and the model sees inline file text.
     let resolved: Attachment[] = [];
-    if (ingestFiles.length > 0) {
-      resolved = await upload(ingestFiles);
+    if (files.length > 0) {
+      resolved = await upload(files);
     }
-    // Now the chat turn — all attachments (inline + resolved ingest) are attached.
-    void sendMessage(message, [...inlineAttachments, ...resolved]);
+    void sendMessage(message, resolved);
     requestAnimationFrame(() => scrollToBottom());
   };
 

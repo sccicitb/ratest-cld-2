@@ -338,6 +338,52 @@ def test_chat_ingested_attachment_not_inlined(client, auth_headers, monkeypatch)
     assert "word0" not in user_msgs[0]["content"]
 
 
+def test_chat_persists_original_text_and_links_attachment(client, auth_headers):
+    """The user Message stores the ORIGINAL text (not the model-augmented dump)
+    and the uploaded attachment is linked to it so the bubble renders its chip."""
+    sid = _create_session(client, auth_headers)
+
+    r = client.post(
+        f"/api/sessions/{sid}/attachments",
+        files=[("files", ("note.txt", b"top secret project details", "text/plain"))],
+        headers=auth_headers,
+    )
+    att = [e for e in _parse_sse(r.text) if e["type"] == "attachment_resolved"][0]["attachment"]
+    att_id = att["id"]
+
+    app.dependency_overrides[get_model_client] = lambda: _StubModel(
+        [[ModelChunk(type="text", text="done")]]
+    )
+    try:
+        r = client.post(
+            f"/api/sessions/{sid}/chat",
+            headers=auth_headers,
+            json={"message": "summarize this", "attachments": [{"id": att_id}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_model_client, None)
+    assert r.status_code == 200
+
+    msgs = client.get(f"/api/sessions/{sid}/messages", headers=auth_headers).json()
+    user_msg = next(m for m in msgs if m["role"] == "user")
+    # Display content is the original text, NOT the file dump.
+    assert user_msg["content"] == "summarize this"
+    assert "top secret project details" not in user_msg["content"]
+    # The attachment is linked to the message → renders as a chip.
+    assert [a["id"] for a in user_msg["attachments"]] == [att_id]
+    assert user_msg["attachments"][0]["fileName"] == "note.txt"
+
+
+class _StubModel:
+    def __init__(self, script):
+        self._script = list(script)
+
+    async def stream(self, messages, tools):
+        chunks = self._script.pop(0) if self._script else []
+        for chunk in chunks:
+            yield chunk
+
+
 # ---------------------------------------------------------------------------
 # session files list + promote
 # ---------------------------------------------------------------------------
