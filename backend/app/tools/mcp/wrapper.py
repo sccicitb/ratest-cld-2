@@ -6,10 +6,12 @@ to MCP calls — external tools never receive user scope.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 
 from mcp import ClientSession, types
 
+from app.config import settings
 from app.tools.context import ToolContext  # noqa: F401  (protocol compat only)
 from app.tools.registry import ToolError
 
@@ -42,7 +44,13 @@ class MCPTool:
         ctx is deliberately unused — external MCP tools never receive user scope.
         Raises ToolError if the MCP server signals isError.
         """
-        res = await self._session.call_tool(self._tool.name, args)
+        try:
+            res = await asyncio.wait_for(
+                self._session.call_tool(self._tool.name, args),
+                timeout=settings.mcp_tool_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            raise ToolError(f"MCP tool {self.name!r} timed out")
 
         # Collect text from TextContent blocks
         texts = [

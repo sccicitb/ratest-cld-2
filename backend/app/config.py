@@ -54,6 +54,7 @@ class Settings(BaseSettings):
 
     # --- MCP (§12.2): path to the YAML server registry ---
     mcp_config_path: str = "./mcp.yaml"
+    mcp_tool_timeout_seconds: float = 30
 
     # --- CORS: prod is same-origin (reverse proxy); this is dev split-origin
     #     convenience only (§2). ---

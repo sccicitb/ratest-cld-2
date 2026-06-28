@@ -8,12 +8,34 @@ Routers are added per docs/BACKEND_SPEC.md as each area is implemented.
 
 from __future__ import annotations
 
+import contextlib
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.mcp.config import load_mcp_config
+from app.mcp.manager import MCPManager
 
-app = FastAPI(title="RAG Chat API", version="0.1.0")
+log = logging.getLogger(__name__)
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    manager = MCPManager(load_mcp_config())
+    try:
+        tools = await manager.connect_all()
+    except Exception:
+        log.exception("MCP connect_all failed at startup — continuing with no MCP tools.")
+        tools = []
+    app.state.mcp_manager = manager
+    app.state.mcp_tools = tools
+    yield
+    await manager.aclose()
+
+
+app = FastAPI(title="RAG Chat API", version="0.1.0", lifespan=lifespan)
 
 from app.errors import register_error_handlers  # noqa: E402
 
