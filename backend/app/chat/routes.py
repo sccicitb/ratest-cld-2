@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
@@ -28,7 +28,7 @@ from app.rag.extract import extract_text
 from app.sse import sse
 from app.tools.builtin.search_kb import SearchKnowledgeBase
 from app.tools.context import ToolContext
-from app.tools.registry import ToolRegistry
+from app.tools.registry import Tool, ToolRegistry
 
 router = APIRouter()
 
@@ -50,9 +50,16 @@ def _owned(db: DbSession, user_id: str, session_id: str) -> ChatSession:
     return s
 
 
-def _build_registry() -> ToolRegistry:
+def get_mcp_tools(request: Request) -> list[Tool]:
+    """Return MCP tools stashed on app.state by the lifespan — empty list if none."""
+    return getattr(request.app.state, "mcp_tools", [])
+
+
+def _build_registry(mcp_tools: list[Tool]) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(SearchKnowledgeBase())
+    for t in mcp_tools:
+        registry.register(t)
     return registry
 
 
@@ -65,6 +72,7 @@ def chat(
     client: QdrantDep,
     embedder: EmbedderDep,
     model: ModelClientDep,
+    mcp_tools: Annotated[list[Tool], Depends(get_mcp_tools)],
 ) -> StreamingResponse:
     session = _owned(db, user.id, session_id)
 
@@ -94,7 +102,7 @@ def chat(
         if inline_blocks:
             model_content = "\n\n---\n\n".join(inline_blocks) + f"\n\n---\n\n{body.message}"
 
-    registry = _build_registry()
+    registry = _build_registry(mcp_tools)
     ctx = ToolContext(
         user_id=user.id,
         session_id=session_id,

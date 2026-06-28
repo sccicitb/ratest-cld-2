@@ -7,9 +7,11 @@ to MCP calls — external tools never receive user scope.
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 
-from mcp import ClientSession, types
+from mcp import ClientSession, McpError, types
 
+from app.config import settings
 from app.tools.context import ToolContext  # noqa: F401  (protocol compat only)
 from app.tools.registry import ToolError
 
@@ -42,7 +44,19 @@ class MCPTool:
         ctx is deliberately unused — external MCP tools never receive user scope.
         Raises ToolError if the MCP server signals isError.
         """
-        res = await self._session.call_tool(self._tool.name, args)
+        # Use the SDK's native per-request timeout (anyio.fail_after inside the
+        # session's own task scope) rather than asyncio.wait_for — wrapping from
+        # an outer task cancels across the anyio scope boundary (noisy warnings,
+        # and risks the long-lived shared session). On timeout the SDK raises
+        # McpError("Timed out ...").
+        try:
+            res = await self._session.call_tool(
+                self._tool.name,
+                args,
+                read_timeout_seconds=timedelta(seconds=settings.mcp_tool_timeout_seconds),
+            )
+        except McpError as exc:
+            raise ToolError(f"MCP tool {self.name!r} failed: {exc}")
 
         # Collect text from TextContent blocks
         texts = [
