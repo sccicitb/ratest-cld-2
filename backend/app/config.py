@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # chains slow by nature. Raise further per deployment if a source is slower.
     mcp_tool_timeout_seconds: float = 120
 
+    # --- Code-exec sandbox (§13): service URL + per-call timeout ---
+    code_exec_url: str = "http://localhost:8001"
+    code_exec_timeout_seconds: float = 60
+
     # --- CORS: prod is same-origin (reverse proxy); this is dev split-origin
     #     convenience only (§2). ---
     cors_origins: list[str] = ["http://localhost:5173"]

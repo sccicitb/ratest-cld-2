@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
+import httpx
 from fastapi import APIRouter, Depends
 from qdrant_client import QdrantClient
 
 from app.auth.deps import CurrentUser, DbSession
+from app.config import settings
 from app.errors import ApiError
 from app.kb.routes import get_qdrant
 from app.models import ChatSession, KBFile, Message
 from app.rag.vectors import delete_by_session
 from app.schemas import MessageOut, RenameSessionRequest, SessionOut
 from app.storage import delete_blob
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -76,6 +81,13 @@ def delete_session(session_id: str, user: CurrentUser, db: DbSession, client: Qd
             delete_blob(kbf.storage_key)
         except Exception:
             pass
+    # §13: best-effort sandbox container teardown — must NOT block deletion.
+    try:
+        with httpx.Client(timeout=5) as hc:
+            hc.delete(f"{settings.code_exec_url}/sessions/{session_id}")
+    except Exception as exc:
+        log.warning("sandbox teardown failed for session %s: %s", session_id, exc)
+
     db.delete(s)
     db.commit()
 
