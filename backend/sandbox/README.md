@@ -71,14 +71,26 @@ The service (host process) reaches each runner either via:
 
 The `ContainerManager._wait_ready` tries both strategies automatically.
 
+> ⚠️ **DEV DOES NOT ENFORCE THE NETWORK WALL.** On OrbStack and Docker Desktop
+> for Mac, a *regular* Docker bridge does **not** add iptables DROP rules between
+> bridge networks — so in dev, sandbox containers on `sandbox_net` **CAN reach**
+> other Docker services on the host (Qdrant, the app DB, the app) and the host
+> itself via `host.docker.internal`. This is the very thing the network wall is
+> meant to prevent. The dev `sandbox_net` is a regular bridge (so the runner has
+> the internet egress it needs to fetch `download_url`s); the integration tests
+> use a separate `internal=True` network only to *prove the isolation mechanism*.
+> **The real network wall is enforced solely by the PROD iptables rules below
+> (Epic C), applied on the Linux VM. Do not treat dev as isolated, and do not
+> deploy to prod without these rules.**
+
 ## Four Isolation Walls
 
-| Wall | Mechanism | Kwarg |
-|------|-----------|-------|
-| Filesystem | `read_only=True` + `/work` & `/tmp` as tmpfs | `read_only`, `tmpfs` |
-| Privilege | Non-root user; all capabilities dropped | `user="sandbox"`, `cap_drop=["ALL"]`, `security_opt=["no-new-privileges"]` |
-| Resources | Memory, CPU, and PID limits | `mem_limit`, `nano_cpus`, `pids_limit` |
-| Network | Isolated Docker bridge; no route to internal services | `network=settings.net` |
+| Wall | Mechanism | Kwarg | Enforced in dev? |
+|------|-----------|-------|------------------|
+| Filesystem | `read_only=True` + `/work` & `/tmp` as tmpfs | `read_only`, `tmpfs` | ✅ yes |
+| Privilege | Non-root user; all capabilities dropped | `user="sandbox"`, `cap_drop=["ALL"]`, `security_opt=["no-new-privileges"]` | ✅ yes |
+| Resources | Memory, CPU, and PID limits | `mem_limit`, `nano_cpus`, `pids_limit` | ✅ yes |
+| Network | Sandbox on its own bridge; egress allowlist (internet/fileserver OK, internal services blocked) | `network=settings.net` **+ prod iptables** | ⚠️ **PROD ONLY** (see warning above) |
 
 ## PROD Iptables Egress Allowlist (Linux VM — Epic C)
 

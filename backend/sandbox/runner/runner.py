@@ -88,6 +88,10 @@ def run_cell(shell: InteractiveShell, code: str, timeout_s: int = 30) -> dict[st
     t.join(timeout=timeout_s)
 
     if t.is_alive():
+        # The daemon thread keeps running until the container process exits;
+        # repeated timeouts in one session accumulate threads (and CPU) until
+        # the container's pids_limit. Acceptable per the brief — the per-convo
+        # container is ephemeral and reaped on idle/session-delete.
         result["error"] = f"Execution timed out after {timeout_s}s"
         return result
 

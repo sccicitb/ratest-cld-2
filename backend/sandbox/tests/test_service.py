@@ -88,6 +88,7 @@ def test_get_or_create_applies_all_four_walls(manager, mock_docker):
     # Filesystem wall
     assert kw["read_only"] is True
     assert "/work" in kw["tmpfs"]
+    assert "/tmp" in kw["tmpfs"]  # IPython needs a writable tmpdir; load-bearing
 
     # Resource wall
     assert "mem_limit" in kw
