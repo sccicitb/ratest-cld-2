@@ -56,8 +56,8 @@ def _make_config() -> MCPConfig:
     )
 
 
-async def smoke_mcp_manager() -> list:
-    """Connect MCPManager and return the tool list."""
+async def smoke_mcp_manager() -> tuple[list, object]:
+    """Connect MCPManager and return (tools, manager)."""
     config = _make_config()
     manager = MCPManager(config)
     try:

@@ -54,7 +54,10 @@ class Settings(BaseSettings):
 
     # --- MCP (§12.2): path to the YAML server registry ---
     mcp_config_path: str = "./mcp.yaml"
-    mcp_tool_timeout_seconds: float = 30
+    # Per-call MCP tool timeout. Generous on purpose: real MCP sources (e.g.
+    # satudata fetches/scrapes) routinely take 60-90s; the spec (§7) calls these
+    # chains slow by nature. Raise further per deployment if a source is slower.
+    mcp_tool_timeout_seconds: float = 120
 
     # --- CORS: prod is same-origin (reverse proxy); this is dev split-origin
     #     convenience only (§2). ---
