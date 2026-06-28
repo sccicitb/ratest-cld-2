@@ -43,6 +43,16 @@ mcp = [
     "mcp>=1.0",
     "pyyaml>=6",
 ]
+# Code-exec sandbox service.
+# docker>=7: ContainerManager + integration tests.
+# ipython, matplotlib: needed to import runner.py in-process for unit tests
+#   (runner/requirements.txt is the authoritative list baked into the image;
+#    these extras mirror the subset needed for in-process test_runner.py).
+sandbox = [
+    "docker>=7",
+    "ipython>=8",
+    "matplotlib>=3.8",
+]
 dev = [
     "pytest>=8",
     "ruff>=0.6",
