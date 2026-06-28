@@ -41,6 +41,7 @@ ingest = [
 # MCP tools (satudata, §12.2) — install when wiring external tools.
 mcp = [
     "mcp>=1.0",
+    "pyyaml>=6",
 ]
 dev = [
     "pytest>=8",
