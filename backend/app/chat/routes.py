@@ -68,14 +68,19 @@ def chat(
 ) -> StreamingResponse:
     session = _owned(db, user.id, session_id)
 
-    # --- Stage 6: prepend inline-attachment text to the user message -------
-    message = body.message
+    # --- Stage 6: split display content (persisted/shown) from model content -
+    # The user's bubble shows `body.message`; the model additionally sees the
+    # text of any inline (non-ingested) attachments prepended. All attachment
+    # ids — inline AND ingested — are linked to the message so their chips render.
+    model_content = body.message
+    attachment_ids: list[str] = []
     if body.attachments:
         inline_blocks: list[str] = []
         for att_ref in body.attachments:
             att_id = att_ref.get("id")
             if not att_id:
                 continue
+            attachment_ids.append(att_id)
             att = db.get(Attachment, att_id)
             if att is None or att.ingested:
                 continue
@@ -87,7 +92,7 @@ def chat(
                 # rather than failing the whole turn.
                 pass
         if inline_blocks:
-            message = "\n\n---\n\n".join(inline_blocks) + f"\n\n---\n\n{body.message}"
+            model_content = "\n\n---\n\n".join(inline_blocks) + f"\n\n---\n\n{body.message}"
 
     registry = _build_registry()
     ctx = ToolContext(
@@ -102,7 +107,9 @@ def chat(
         async for event in run_turn(
             db=db,
             session=session,
-            message=message,
+            message=body.message,
+            model_content=model_content,
+            attachment_ids=attachment_ids,
             registry=registry,
             model=model,
             ctx=ctx,

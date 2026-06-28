@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from app.chat.client import ModelChunk, ModelClient
 from app.chat.events import done, error, step, token
 from app.config import settings
-from app.models import ChatSession, Message
+from app.models import Attachment, ChatSession, Message
 from app.tools.context import ToolContext
 from app.tools.registry import ToolError, ToolRegistry
 
@@ -72,19 +72,36 @@ async def run_turn(
     registry: ToolRegistry,
     model: ModelClient,
     ctx: ToolContext,
+    model_content: str | None = None,
+    attachment_ids: list[str] | None = None,
 ) -> AsyncIterator[dict]:
+    """Run one chat turn.
+
+    `message` is the user's text — persisted and shown in the bubble.
+    `model_content` is what the model actually sees (e.g. with inline
+    attachment text prepended); defaults to `message`. `attachment_ids` are
+    bound to the new user `Message` so the frontend renders their chips.
+    """
     try:
         # Snapshot prior history before adding this turn's user message.
         history = _history_messages(session)
 
         user_msg = Message(session_id=session.id, role="user", content=message)
         db.add(user_msg)
+        db.flush()  # assign user_msg.id before linking attachments
+        if attachment_ids:
+            for aid in attachment_ids:
+                att = db.get(Attachment, aid)
+                # Only bind attachments that belong to this session's turn and
+                # aren't already attached to an earlier message.
+                if att is not None and att.message_id is None:
+                    att.message_id = user_msg.id
         if session.title == "New Chat":
             session.title = _auto_title(message)
         session.updated_at = datetime.now(timezone.utc)
         db.commit()
 
-        messages = history + [{"role": "user", "content": message}]
+        messages = history + [{"role": "user", "content": model_content or message}]
 
         yield step("thinking", "active")
 

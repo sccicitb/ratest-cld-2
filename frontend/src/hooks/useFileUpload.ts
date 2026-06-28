@@ -12,6 +12,9 @@ export function useFileUpload() {
   const [tasks, setTasks] = useState<UploadTask[]>([]);
   const activeCount = useRef(0);
   const queue = useRef<string[]>([]);
+  // Files by task id, kept in a ref so `pump` can start an upload without
+  // reading React state inside a setState updater (see `pump` below).
+  const files = useRef<Map<string, File>>(new Map());
 
   const update = useCallback(
     (id: string, patch: Partial<UploadTask>) => {
@@ -43,6 +46,7 @@ export function useFileUpload() {
         });
       } finally {
         activeCount.current--;
+        files.current.delete(id);
         pump();
       }
     },
@@ -50,25 +54,27 @@ export function useFileUpload() {
     [qc, update],
   );
 
+  // Start queued tasks up to the concurrency cap. This MUST NOT mutate state:
+  // a side effect inside a setState updater gets invoked twice by React Strict
+  // Mode, which previously fired every upload twice. The queue + `files` ref
+  // give us everything we need without touching `tasks`.
   const pump = useCallback(() => {
     while (activeCount.current < MAX_CONCURRENT && queue.current.length > 0) {
       const id = queue.current.shift()!;
-      setTasks((prev) => {
-        const task = prev.find((t) => t.id === id);
-        if (task && task.status === "queued") void runTask(id, task.file);
-        return prev;
-      });
+      const file = files.current.get(id);
+      if (file) void runTask(id, file);
     }
   }, [runTask]);
 
   const addFiles = useCallback(
-    (files: FileList | File[]) => {
-      const incoming = Array.from(files);
-      const newTasks: UploadTask[] = incoming.map((file) => {
+    (incoming: FileList | File[]) => {
+      const newTasks: UploadTask[] = Array.from(incoming).map((file) => {
         const valid = isValidFileType(file.name);
         const status: UploadTaskStatus = valid ? "queued" : "error";
+        const id = generateId();
+        if (valid) files.current.set(id, file);
         return {
-          id: generateId(),
+          id,
           file,
           progress: 0,
           status,
@@ -86,6 +92,7 @@ export function useFileUpload() {
 
   const cancelTask = useCallback((id: string) => {
     queue.current = queue.current.filter((q) => q !== id);
+    files.current.delete(id);
     setTasks((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
@@ -93,6 +100,9 @@ export function useFileUpload() {
 
   const retryTask = useCallback(
     (id: string) => {
+      const task = tasks.find((t) => t.id === id);
+      if (!task) return;
+      files.current.set(id, task.file);
       setTasks((prev) =>
         prev.map((t) =>
           t.id === id
@@ -103,7 +113,7 @@ export function useFileUpload() {
       queue.current.push(id);
       pump();
     },
-    [pump],
+    [pump, tasks],
   );
 
   return { addFiles, tasks, cancelTask, retryTask, removeTask };

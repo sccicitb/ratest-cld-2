@@ -15,18 +15,13 @@ import {
 } from "@/components/chat/AttachmentPreview";
 import { useVoiceInput } from "@/hooks/useVoiceInput";
 import { cn, generateId, routeChatAttachment, SUPPORTED_FILE_TYPES } from "@/lib/utils";
-import type { Attachment } from "@/types/chat";
 
 interface InputBarProps {
-  onSend: (
-    message: string,
-    inlineAttachments: Attachment[],
-    /** The raw File objects for heavy / ingest-routed attachments.  The
-     *  receiver uploads these via POST /attachments (§6.1) before the
-     *  chat turn so the resolved Attachment record (with authoritative
-     *  `ingested`) arrives before the model sees the message. */
-    ingestFiles: File[],
-  ) => void;
+  /** The receiver uploads every file via POST /sessions/:id/attachments
+   *  (§6.1) before the chat turn; the backend authoritatively routes each
+   *  one inline-vs-ingest and returns the resolved Attachment records, which
+   *  are then sent with the message. */
+  onSend: (message: string, files: File[]) => void;
   isStreaming: boolean;
   onAbort: () => void;
 }
@@ -78,33 +73,16 @@ export function InputBar({ onSend, isStreaming, onAbort }: InputBarProps) {
 
   const handleSend = () => {
     const trimmed = text.trim();
-    const inline = attachments.filter((a) => a.route === "inline");
-    const ingest = attachments.filter((a) => a.route === "ingest");
-    if (!trimmed && inline.length === 0 && ingest.length === 0) return;
+    // Anything not rejected by the client-side sanity check gets uploaded;
+    // the backend makes the authoritative inline-vs-ingest decision.
+    const sendable = attachments.filter((a) => a.route !== "reject");
+    if (!trimmed && sendable.length === 0) return;
     if (isStreaming) return;
 
-    const inlineAttachments: Attachment[] = inline.map((a) => ({
-      id: a.id,
-      fileName: a.file.name,
-      fileType: a.file.type || "application/octet-stream",
-      fileSize: a.file.size,
-      url: "#",
-    }));
-    // Ingested files still appear in the message bubble (marked "Indexed"), so
-    // the attachment is visible even though it went to retrieval, not context.
-    const ingestAttachments: Attachment[] = ingest.map((a) => ({
-      id: a.id,
-      fileName: a.file.name,
-      fileType: a.file.type || "application/octet-stream",
-      fileSize: a.file.size,
-      url: "#",
-      ingested: true,
-    }));
-    // Pass the raw File objects — the receiver uploads them to
-    // POST /sessions/:id/attachments first, then starts the chat turn
-    // with the authority-resolved attachment records.
-    const ingestFiles: File[] = ingest.map((a) => a.file);
-    onSend(trimmed, [...inlineAttachments, ...ingestAttachments], ingestFiles);
+    // Pass the raw File objects — the receiver uploads them all to
+    // POST /sessions/:id/attachments, then starts the chat turn with the
+    // authority-resolved attachment records.
+    onSend(trimmed, sendable.map((a) => a.file));
     setText("");
     setAttachments([]);
     if (isRecording) stopRecording();
