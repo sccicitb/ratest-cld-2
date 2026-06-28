@@ -1,0 +1,7 @@
+mcp_servers:
+  - name: satudata-garut
+    transport: streamable-http
+    url: http://satudata-mcp:8800/mcp
+    auth: { type: none }
+    enabled: false      # flipped on in Stage 8 against the real server
+    allowed_tools: []

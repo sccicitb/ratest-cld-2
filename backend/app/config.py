@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     max_tool_iterations: int = 6
     max_parallel_tools: int = 2
 
+    # --- MCP (§12.2): path to the YAML server registry ---
+    mcp_config_path: str = "./mcp.yaml"
+
     # --- CORS: prod is same-origin (reverse proxy); this is dev split-origin
     #     convenience only (§2). ---
     cors_origins: list[str] = ["http://localhost:5173"]
