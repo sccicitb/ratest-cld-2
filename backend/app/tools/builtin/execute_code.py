@@ -60,7 +60,14 @@ class ExecuteCode:
         try:
             async with httpx.AsyncClient(timeout=settings.code_exec_timeout_seconds) as hc:
                 resp = await hc.post(url, json={"code": code})
-        except httpx.ConnectError as exc:
+        except httpx.TimeoutException as exc:
+            # Slow fetch/compute (large datasets) — feed back as a tool-result so
+            # the model can react, not a stream-level error.
+            raise ToolError(
+                f"code sandbox timed out after {settings.code_exec_timeout_seconds}s"
+            ) from exc
+        except httpx.RequestError as exc:
+            # Covers ConnectError and any other transport failure.
             raise ToolError(f"code sandbox unavailable: {exc}") from exc
 
         if resp.status_code >= 400:

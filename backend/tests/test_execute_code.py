@@ -212,6 +212,23 @@ def test_connection_refused_raises_tool_error():
             asyncio.run(tool.execute({"code": "print(1)"}, ctx))
 
 
+def test_timeout_raises_tool_error():
+    """A slow sandbox (timeout) degrades to a ToolError tool-result, not a
+    stream-level error — likely with large-dataset fetches."""
+    tool = ExecuteCode()
+    ctx = _ctx()
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=httpx.ReadTimeout("timed out"))
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("app.tools.builtin.execute_code.httpx.AsyncClient", return_value=mock_ctx):
+        with pytest.raises(ToolError, match="timed out"):
+            asyncio.run(tool.execute({"code": "print(1)"}, ctx))
+
+
 # ---------------------------------------------------------------------------
 # Empty code → ToolError (no HTTP call)
 # ---------------------------------------------------------------------------
