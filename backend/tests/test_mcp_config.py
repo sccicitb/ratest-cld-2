@@ -77,6 +77,23 @@ def test_bearer_auth_roundtrip(tmp_path):
     assert auth.token_env == "MY_TOKEN"
 
 
+def test_bearer_without_token_env_rejected(tmp_path):
+    """bearer auth missing token_env → clear validation error at load time
+    (not a confusing TypeError later when resolving the token)."""
+    import pytest
+
+    cfg_file = tmp_path / "mcp.yaml"
+    cfg_file.write_text(
+        "mcp_servers:\n"
+        "  - name: srv\n"
+        "    url: http://srv/mcp\n"
+        "    auth:\n"
+        "      type: bearer\n"
+    )
+    with pytest.raises(ValueError, match="token_env"):
+        load_mcp_config(str(cfg_file))
+
+
 def test_multiple_servers(tmp_path):
     """Multiple servers in one YAML file are all parsed."""
     cfg_file = tmp_path / "mcp.yaml"

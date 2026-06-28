@@ -8,7 +8,7 @@ import logging
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from app.config import settings
 
@@ -18,6 +18,12 @@ log = logging.getLogger(__name__)
 class MCPAuth(BaseModel):
     type: Literal["none", "bearer"] = "none"
     token_env: str | None = None
+
+    @model_validator(mode="after")
+    def _require_token_env_for_bearer(self) -> "MCPAuth":
+        if self.type == "bearer" and not self.token_env:
+            raise ValueError("auth.token_env is required when auth.type is 'bearer'")
+        return self
 
 
 class MCPServerConfig(BaseModel):

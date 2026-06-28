@@ -3369,6 +3369,7 @@ llm = [
 ]
 mcp = [
     { name = "mcp" },
+    { name = "pyyaml" },
 ]
 rag = [
     { name = "flagembedding" },
@@ -3391,6 +3392,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "python-docx", marker = "extra == 'ingest'", specifier = ">=1.1" },
     { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "pyyaml", marker = "extra == 'mcp'", specifier = ">=6" },
     { name = "qdrant-client", marker = "extra == 'rag'", specifier = ">=1.11" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "sqlalchemy", specifier = ">=2.0" },
