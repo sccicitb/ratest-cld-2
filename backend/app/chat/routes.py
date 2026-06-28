@@ -26,6 +26,7 @@ from app.models import Attachment, ChatSession
 from app.rag.embedder import Embedder
 from app.rag.extract import extract_text
 from app.sse import sse
+from app.tools.builtin.execute_code import ExecuteCode
 from app.tools.builtin.search_kb import SearchKnowledgeBase
 from app.tools.context import ToolContext
 from app.tools.registry import Tool, ToolRegistry
@@ -58,6 +59,7 @@ def get_mcp_tools(request: Request) -> list[Tool]:
 def _build_registry(mcp_tools: list[Tool]) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(SearchKnowledgeBase())
+    registry.register(ExecuteCode())
     for t in mcp_tools:
         registry.register(t)
     return registry

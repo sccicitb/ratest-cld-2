@@ -1,6 +1,7 @@
 """Sessions & messages endpoint tests (§5)."""
 
 from __future__ import annotations
+from unittest.mock import MagicMock, patch
 
 from qdrant_client import QdrantClient
 
@@ -76,3 +77,65 @@ def test_cannot_access_another_users_session(client, auth_headers, session_facto
 
     # 404 (not 403) — never leak existence.
     assert client.get(f"/api/sessions/{other_sid}", headers=auth_headers).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Stage 10: sandbox teardown on session delete
+# ---------------------------------------------------------------------------
+
+
+def _qdrant_in_memory():
+    return QdrantClient(location=":memory:")
+
+
+def _make_mock_httpx_client(delete_raises: Exception | None = None):
+    """Return a fake httpx.Client context manager whose .delete() can raise."""
+    mock_hc = MagicMock()
+    if delete_raises:
+        mock_hc.delete.side_effect = delete_raises
+    else:
+        mock_hc.delete.return_value = MagicMock(status_code=204)
+    mock_ctx = MagicMock()
+    mock_ctx.__enter__ = MagicMock(return_value=mock_hc)
+    mock_ctx.__exit__ = MagicMock(return_value=False)
+    return mock_ctx, mock_hc
+
+
+def test_delete_session_issues_sandbox_delete(client, auth_headers):
+    """Deleting a session triggers DELETE {code_exec_url}/sessions/{id}."""
+    app.dependency_overrides[get_qdrant] = _qdrant_in_memory
+    mock_ctx, mock_hc = _make_mock_httpx_client()
+    try:
+        r = client.post("/api/sessions", headers=auth_headers)
+        assert r.status_code == 201
+        sid = r.json()["id"]
+
+        with patch("app.sessions.routes.httpx.Client", return_value=mock_ctx):
+            resp = client.delete(f"/api/sessions/{sid}", headers=auth_headers)
+
+        assert resp.status_code == 204
+        # Verify the sandbox DELETE was called with the correct session_id in the URL
+        mock_hc.delete.assert_called_once()
+        called_url = mock_hc.delete.call_args[0][0]
+        assert sid in called_url
+    finally:
+        app.dependency_overrides.pop(get_qdrant, None)
+
+
+def test_delete_session_still_204_when_sandbox_call_fails(client, auth_headers):
+    """Sandbox teardown failure is best-effort — deletion still returns 204."""
+    app.dependency_overrides[get_qdrant] = _qdrant_in_memory
+    mock_ctx, mock_hc = _make_mock_httpx_client(
+        delete_raises=Exception("connection refused")
+    )
+    try:
+        r = client.post("/api/sessions", headers=auth_headers)
+        assert r.status_code == 201
+        sid = r.json()["id"]
+
+        with patch("app.sessions.routes.httpx.Client", return_value=mock_ctx):
+            resp = client.delete(f"/api/sessions/{sid}", headers=auth_headers)
+
+        assert resp.status_code == 204
+    finally:
+        app.dependency_overrides.pop(get_qdrant, None)
