@@ -1,0 +1,52 @@
+# Production services — runs on the Hyper-V Linux VM.
+#
+# The FastAPI backend runs natively on the Windows host (GPU access).
+# It reaches Qdrant and the code-exec service at the VM's IP address
+# (set QDRANT_URL and CODE_EXEC_URL in backend/.env accordingly).
+#
+# Before first run on the VM:
+#   1. Build the runner image (once, then on dependency changes):
+#        docker build -t rag-sandbox backend/sandbox/runner
+#   2. Start services:
+#        docker compose -f deploy/docker-compose.prod.yml up -d
+#   3. Apply egress allowlist (see deploy/sandbox-iptables.sh):
+#        bash deploy/sandbox-iptables.sh
+#
+# The sandbox_net bridge is created by the code-exec service on startup
+# (ContainerManager.ensure_network).  No pre-creation needed.
+
+services:
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      # Bind to all interfaces so the Windows host (backend) can reach this VM.
+      # Firewall / Hyper-V networking controls external exposure.
+      - "0.0.0.0:6333:6333"   # REST API
+      - "0.0.0.0:6334:6334"   # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  code-exec:
+    build:
+      # Context is the backend package root (so sandbox/ is importable).
+      context: ../backend
+      dockerfile: sandbox/code-exec.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:8001:8001"   # reachable from Windows host
+    volumes:
+      # docker.sock lets the service spawn and destroy runner containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SANDBOX_IMAGE: rag-sandbox:latest
+      SANDBOX_NET: sandbox_net
+      # Tune per deployment:
+      # SANDBOX_MEM: 2g
+      # SANDBOX_CPUS: "1.0"
+      # SANDBOX_IDLE_TTL: "900"
+      # RUN_TIMEOUT: "30"
+
+volumes:
+  qdrant_data:
