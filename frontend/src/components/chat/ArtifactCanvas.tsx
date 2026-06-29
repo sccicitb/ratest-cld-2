@@ -19,8 +19,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import html2pdf from "html2pdf.js";
-
 import { fetchArtifactHtml } from "@/lib/api";
 import type { ArtifactSummary } from "@/types/chat";
 
@@ -94,29 +92,19 @@ export function ArtifactCanvas({
     }
   }, [artifact, open, load, revoke]);
 
+  // Chrome blocks contentWindow.print() on sandboxed iframes even with
+  // allow-modals — calling print() is silently swallowed.  Our fallback
+  // opens the Blob URL in a new tab instead (native print works there).
   const handlePrint = () => {
-    if (state.tag !== "ready") return;
-    // html2pdf renders the HTML in a temporary off-screen container and
-    // captures it to a real .pdf — one click, no new tab, no server infra.
-    const container = document.createElement("div");
-    container.style.position = "absolute";
-    container.style.left = "-9999px";
-    container.style.top = "0";
-    container.innerHTML = state.html;
-    document.body.appendChild(container);
-    const filename = `${artifact?.title ?? "report"}.pdf`;
-    html2pdf()
-      .set({
-        margin: [0.5, 0.5, 0.5, 0.5],
-        filename,
-        image: { type: "jpeg", quality: 0.95 },
-        html2canvas: { scale: 2, useCORS: true },
-        jsPDF: { unit: "in", format: "letter", orientation: "portrait" },
-      })
-      .from(container)
-      .save()
-      .then(() => document.body.removeChild(container))
-      .catch(() => document.body.removeChild(container));
+    if (state.tag === "ready") {
+      const w = window.open(state.blobUrl, "_blank");
+      // Try to auto-open the print dialog in the new tab after it loads.
+      // Popup blockers may prevent the new window or the print() call, but
+      // the tab itself always opens — user can Ctrl‑P from there.
+      if (w) {
+        try { w.print(); } catch { /* blocked */ }
+      }
+    }
   };
 
   const handleOpenNewTab = () => {
