@@ -102,6 +102,9 @@ export function isImageFile(fileName: string): boolean {
 // Hard ceiling for anything the composer will accept — purely a sanity guard.
 export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024; // 100 MB
 
+// Image ceiling — matches backend max_image_bytes.
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
+
 // Inline routing threshold for documents. NOTE: in the real backend the inline-
 // vs-ingest decision is made on *token count after parsing* (bytes ≠ tokens — an
 // image-heavy PDF can be 30 MB yet only a few thousand tokens). The frontend
@@ -131,8 +134,11 @@ export function routeChatAttachment(file: {
   if (file.size > MAX_ATTACHMENT_BYTES) {
     return { route: "reject", reason: "File too large (max 100 MB)" };
   }
-  // Images go inline as vision blocks regardless of size (within the ceiling).
+  // Images go inline as vision blocks — but reject if they exceed the backend cap.
   if (isImageFile(file.name)) {
+    if (file.size > MAX_IMAGE_BYTES) {
+      return { route: "reject", reason: "Image too large (max 10 MB)" };
+    }
     return { route: "inline" };
   }
   if (file.size > MAX_INLINE_DOC_BYTES) {

@@ -196,3 +196,24 @@ export const getSessionFiles = (sessionId: string): Promise<KnowledgeBaseFile[]>
 
 export const promoteSessionFile = (sessionId: string, fileId: string): Promise<KnowledgeBaseFile> =>
   req(`/api/sessions/${sessionId}/files/${fileId}/promote`, { method: "POST", headers: authHeaders() }).then(r => r.json());
+
+/* ------------------------------------------------------------------ */
+/*  Attachment raw serving (authed blob fetch)                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Fetch an attachment's raw bytes with the Bearer token (plain <img src>
+ * cannot send the auth header and would 401). Returns a revocable object URL.
+ * Caller MUST call URL.revokeObjectURL on the returned string when done.
+ */
+export async function fetchAttachmentObjectUrl(
+  sessionId: string,
+  attachmentId: string,
+): Promise<string> {
+  const res = await req(
+    `/api/sessions/${sessionId}/attachments/${attachmentId}/raw`,
+    { headers: authHeaders() },
+  );
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}

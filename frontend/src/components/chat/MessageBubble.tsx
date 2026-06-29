@@ -6,11 +6,31 @@ import { FileStack, FileText, Volume2, VolumeX } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { AuthedImage } from "@/components/chat/AuthedImage";
 import { useVoiceSynthesis } from "@/hooks/useVoiceSynthesis";
 import { cn, formatFileSize } from "@/lib/utils";
 import type { Attachment, Message } from "@/types/chat";
 
-function AttachmentChip({ attachment }: { attachment: Attachment }) {
+function AttachmentChip({
+  attachment,
+  sessionId,
+}: {
+  attachment: Attachment;
+  sessionId: string;
+}) {
+  // Images are rendered as thumbnails (click-to-enlarge); non-images keep the chip.
+  if (attachment.fileType.startsWith("image/")) {
+    return (
+      <AuthedImage
+        sessionId={sessionId}
+        attachmentId={attachment.id}
+        alt={attachment.fileName}
+        className="max-h-48 max-w-xs"
+        openOnClick
+      />
+    );
+  }
+
   const Icon = attachment.ingested ? FileStack : FileText;
   return (
     <div className="flex items-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-sm">
@@ -80,7 +100,7 @@ export const MessageBubble = memo(function MessageBubble({
         {message.attachments && message.attachments.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {message.attachments.map((a) => (
-              <AttachmentChip key={a.id} attachment={a} />
+              <AttachmentChip key={a.id} attachment={a} sessionId={message.sessionId} />
             ))}
           </div>
         )}
