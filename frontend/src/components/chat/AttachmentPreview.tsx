@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { FileStack, FileText, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { formatFileSize, isImageFile } from "@/lib/utils";
 import type { AttachmentRoute } from "@/lib/utils";
 
@@ -22,25 +21,18 @@ function PendingImageThumb({
   attachment: PendingAttachment;
   onRemove: (id: string) => void;
 }) {
-  const [src, setSrc] = useState<string | null>(null);
-
-  useEffect(() => {
-    const url = URL.createObjectURL(attachment.file);
-    setSrc(url);
-    return () => URL.revokeObjectURL(url);
-  }, [attachment.file]);
+  // createObjectURL is synchronous, so build the URL during the initial render
+  // (lazy initializer) — no skeleton flash — and revoke it on unmount.
+  const [src] = useState(() => URL.createObjectURL(attachment.file));
+  useEffect(() => () => URL.revokeObjectURL(src), [src]);
 
   return (
     <div className="group relative inline-block">
-      {src ? (
-        <img
-          src={src}
-          alt={attachment.file.name}
-          className="max-h-24 max-w-32 rounded-lg object-cover"
-        />
-      ) : (
-        <Skeleton className="h-24 w-32 rounded-lg" />
-      )}
+      <img
+        src={src}
+        alt={attachment.file.name}
+        className="max-h-24 max-w-32 rounded-lg object-cover"
+      />
       <Button
         variant="ghost"
         size="icon"
