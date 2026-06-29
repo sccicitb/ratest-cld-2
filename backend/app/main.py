@@ -66,12 +66,27 @@ def _mount_spa(target: FastAPI) -> None:
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     # Apply any pending Alembic migrations before wiring routes — no manual
-    # `alembic upgrade head` on deploy is needed.
+    # `alembic upgrade head` on deploy is needed.  `command.upgrade()` calls
+    # `logging.config.fileConfig(alembic.ini)` internally, which resets the root
+    # logger + all handlers and silently drops uvicorn's access-log handler.
+    # Save and restore the logging state around the migration so uvicorn's
+    # access logs survive.
+    import logging
+    import logging.config as lc
+
     from alembic.config import Config as AlembicConfig
     from alembic import command
 
-    alembic_cfg = AlembicConfig("alembic.ini")
-    command.upgrade(alembic_cfg, "head")
+    _saved = lc.fileConfig
+    try:
+        # `command.upgrade()` calls `logging.config.fileConfig(alembic.ini)`
+        # which resets the root logger and drops uvicorn's access-log handler.
+        # Substitute a no-op so our handlers survive.
+        lc.fileConfig = lambda *a, **kw: None  # type: ignore[assignment]
+        alembic_cfg = AlembicConfig("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+    finally:
+        lc.fileConfig = _saved
 
     manager = MCPManager(load_mcp_config())
     try:
