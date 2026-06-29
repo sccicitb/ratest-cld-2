@@ -97,17 +97,24 @@ async def upload_attachments(
                     storage_key, size = save_upload(_SyncUpload(name, file.file))
                     if size > settings.max_image_bytes:
                         delete_blob(storage_key)
-                        limit_mb = settings.max_image_bytes // (1024 * 1024)
+                        limit_mb = settings.max_image_bytes / (1024 * 1024)
                         yield sse(
                             {
                                 "type": "error",
-                                "message": f"{name} exceeds the {limit_mb} MB image limit",
+                                "message": f"{name} exceeds the {limit_mb:.0f} MB image limit",
                             }
                         )
                         continue
 
+                    # Trust the content-type only if it's actually an image type;
+                    # otherwise (missing/generic, e.g. application/octet-stream)
+                    # derive it from the extension so the bytes are served as an
+                    # image the browser will render inline.
                     ext = Path(name).suffix.lower().lstrip(".")
-                    file_type = content_type or f"image/{ext}"
+                    if content_type and content_type.startswith("image/"):
+                        file_type = content_type
+                    else:
+                        file_type = f"image/{'jpeg' if ext == 'jpg' else ext}"
                     att = Attachment(
                         message_id=None,
                         file_name=name or storage_key,

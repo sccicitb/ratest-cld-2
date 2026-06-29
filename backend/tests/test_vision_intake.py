@@ -315,6 +315,37 @@ def test_raw_endpoint_404_for_other_users_session(client, auth_headers, session_
 # ---------------------------------------------------------------------------
 
 
+def test_png_with_missing_content_type_still_detected_as_image(client, auth_headers):
+    """A .png with an empty/wrong content-type is still routed to the image path
+    (extension fallback), not text extraction."""
+    import app.sessions.attachments as _att_mod
+
+    extract_called: list[str] = []
+    orig = _att_mod.extract_text
+
+    def _spy(storage_key, filename):
+        extract_called.append(filename)
+        return orig(storage_key, filename)
+
+    sid = _create_session(client, auth_headers)
+    _att_mod.extract_text = _spy
+    try:
+        r = client.post(
+            f"/api/sessions/{sid}/attachments",
+            # generic octet-stream content-type — only the .png extension marks it
+            files=[("files", ("diagram.png", _TINY_PNG, "application/octet-stream"))],
+            headers=auth_headers,
+        )
+    finally:
+        _att_mod.extract_text = orig
+
+    assert r.status_code == 200, r.text
+    resolved = [e for e in _parse_sse(r.text) if e["type"] == "attachment_resolved"]
+    assert len(resolved) == 1
+    assert resolved[0]["attachment"]["fileType"].startswith("image/")
+    assert "diagram.png" not in extract_called, "image must not hit extract_text"
+
+
 def test_txt_upload_still_uses_text_path(client, auth_headers):
     """A .txt file still goes through extract_text and produces an Attachment row."""
     sid = _create_session(client, auth_headers)
