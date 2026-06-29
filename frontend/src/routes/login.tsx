@@ -58,10 +58,10 @@ export default function LoginRoute() {
     <div className="flex min-h-dvh items-center justify-center bg-muted/40 px-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="space-y-2 text-center">
-          <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-brand-red text-xl font-bold text-white">
-            R
+          <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-primary text-xl font-bold text-primary-foreground">
+            CA
           </div>
-          <CardTitle className="text-xl">Welcome to RAG Chat</CardTitle>
+          <CardTitle className="text-xl">Welcome to CityA</CardTitle>
           <CardDescription>
             Sign in to continue. Any credentials work in this demo.
           </CardDescription>

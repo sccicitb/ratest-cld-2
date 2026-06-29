@@ -97,10 +97,10 @@ export function Sidebar() {
         <div className="flex h-14 items-center justify-between px-3">
           {!collapsed && (
             <Link to="/" className="flex items-center gap-2 pl-1">
-              <span className="flex size-7 items-center justify-center rounded-md bg-brand-red text-sm font-bold text-white">
-                R
+              <span className="flex size-7 items-center justify-center rounded-md bg-primary text-xs font-bold text-primary-foreground">
+                CA
               </span>
-              <span className="font-semibold">RAG Chat</span>
+              <span className="font-semibold">CityA</span>
             </Link>
           )}
           <Tooltip>
