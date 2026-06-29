@@ -5,7 +5,6 @@ import {
   Loader2,
   Maximize2,
   Minimize2,
-  Printer,
   AlertTriangle,
 } from "lucide-react";
 
@@ -92,24 +91,16 @@ export function ArtifactCanvas({
     }
   }, [artifact, open, load, revoke]);
 
-  // Chrome blocks contentWindow.print() on sandboxed iframes even with
-  // allow-modals — calling print() is silently swallowed.  Our fallback
-  // opens the Blob URL in a new tab instead (native print works there).
-  const handlePrint = () => {
+  // The sandboxed iframe blocks contentWindow.print() in Chrome; client-side
+  // PDF libs (html2pdf.js) capture the wrong DOM.  The reliable path is
+  // opening the Blob URL in its own tab — native browser print works there,
+  // and interactive charts render faithfully.
+  const handleOpen = () => {
     if (state.tag === "ready") {
       const w = window.open(state.blobUrl, "_blank");
-      // Try to auto-open the print dialog in the new tab after it loads.
-      // Popup blockers may prevent the new window or the print() call, but
-      // the tab itself always opens — user can Ctrl‑P from there.
       if (w) {
-        try { w.print(); } catch { /* blocked */ }
+        try { w.print(); } catch { /* popup blocker may block auto-print */ }
       }
-    }
-  };
-
-  const handleOpenNewTab = () => {
-    if (state.tag === "ready") {
-      window.open(state.blobUrl, "_blank");
     }
   };
 
@@ -140,29 +131,21 @@ export function ArtifactCanvas({
             >
               {expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
             </Button>
-            {/* Actions (right-aligned, with clearance from Sheet's built-in X) */}
+            {/* Action (right-aligned, with clearance from Sheet's built-in X).
+                 Client-side PDF is blocked by the sandboxed iframe — the
+                 reliable path is opening the Blob URL in a new tab, where
+                 native browser print (Ctrl‑P) works with full fidelity. */}
             <div className="ml-auto flex items-center gap-1">
               {state.tag === "ready" && (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handlePrint}
-                    className="gap-1.5"
-                  >
-                    <Printer className="size-4" />
-                    Export
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleOpenNewTab}
-                    className="gap-1.5"
-                  >
-                    <ExternalLink className="size-4" />
-                    Open
-                  </Button>
-                </>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleOpen}
+                  className="gap-1.5"
+                >
+                  <ExternalLink className="size-4" />
+                  Open Report
+                </Button>
               )}
             </div>
           </div>
