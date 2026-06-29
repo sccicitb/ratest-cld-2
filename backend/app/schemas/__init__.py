@@ -90,6 +90,14 @@ class KnowledgeBaseFileOut(CamelModel):
     scope: str = "kb"
 
 
+# --- Artifacts (§v1.1 Stage A1) ---
+class ArtifactOut(CamelModel):
+    id: str
+    title: str
+    latest_version: int
+    created_at: datetime
+
+
 __all__ = [
     "CamelModel",
     "LoginRequest",
@@ -100,4 +108,5 @@ __all__ = [
     "AttachmentOut",
     "MessageOut",
     "KnowledgeBaseFileOut",
+    "ArtifactOut",
 ]

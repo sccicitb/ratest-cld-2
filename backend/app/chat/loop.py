@@ -29,9 +29,9 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
 from app.chat.client import ModelChunk, ModelClient
-from app.chat.events import done, error, step, token
+from app.chat.events import artifact, done, error, step, token
 from app.config import settings
-from app.models import Attachment, ChatSession, Message
+from app.models import ArtifactVersion, Attachment, ChatSession, Message
 from app.storage import open_blob
 from app.tools.context import ToolContext
 from app.tools.registry import ToolError, ToolRegistry
@@ -206,6 +206,7 @@ async def run_turn(
         final_text_parts: list[str] = []
         iteration = 0
         force_final = False
+        current_turn_artifact_versions: list[str] = []
 
         while True:
             iteration += 1
@@ -274,6 +275,19 @@ async def run_turn(
             for call_id in call_ids:
                 yield step("calling_tool", "complete", id=call_id)
 
+            # v1.1 Stage A1: after a successful `create_artifact` tool call,
+            # emit the artifact SSE event and track versions for later
+            # linkage to the assistant message.
+            if ctx.pending_artifacts:
+                for info in ctx.pending_artifacts:
+                    yield artifact(
+                        artifactId=info["artifact_id"],
+                        version=info["version"],
+                        title=info["title"],
+                    )
+                    current_turn_artifact_versions.append(info["version_id"])
+                ctx.pending_artifacts.clear()
+
             for tc, result in zip(tool_calls, results):
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": result}
@@ -285,6 +299,15 @@ async def run_turn(
             session_id=session.id, role="assistant", content=final_text
         )
         db.add(assistant_msg)
+        db.flush()  # assign assistant_msg.id so we can link artifacts
+
+        # v1.1 Stage A1: link artifact versions created this turn to the
+        # assistant message that authored them.
+        for version_id in current_turn_artifact_versions:
+            v = db.get(ArtifactVersion, version_id)
+            if v is not None:
+                v.message_id = assistant_msg.id
+
         session.updated_at = datetime.now(timezone.utc)
         db.commit()
 

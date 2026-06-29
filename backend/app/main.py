@@ -103,6 +103,7 @@ def health() -> dict[str, str]:
 # --- Routers (implemented per docs/BACKEND_SPEC.md) -------------------------
 from app.auth.routes import router as auth_router  # noqa: E402
 from app.sessions.routes import router as sessions_router  # noqa: E402
+from app.sessions.artifacts import router as artifacts_router  # noqa: E402
 from app.sessions.attachments import router as attachments_router  # noqa: E402
 from app.kb.routes import router as kb_router  # noqa: E402
 from app.chat.routes import router as chat_router  # noqa: E402
@@ -110,6 +111,7 @@ from app.chat.routes import router as chat_router  # noqa: E402
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(attachments_router, prefix="/api/sessions", tags=["attachments"])
+app.include_router(artifacts_router, prefix="/api/sessions", tags=["artifacts"])
 app.include_router(kb_router, prefix="/api/knowledge-base", tags=["kb"])
 app.include_router(chat_router, prefix="/api/sessions", tags=["chat"])
 
