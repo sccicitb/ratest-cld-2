@@ -51,12 +51,13 @@ fi
 
 echo "Applying iptables rules for sandbox bridge: $SANDBOX_BR"
 
-# ---- Allow MCP fileserver(s) FIRST (before the DROP rules) ------------------
-iptables -I FORWARD -i "$SANDBOX_BR" \
-    -d "$FILESERVER_IP" -p tcp --dport "$FILESERVER_PORT" -j ACCEPT
-echo "  ACCEPT → fileserver $FILESERVER_IP:$FILESERVER_PORT"
+# NOTE on ordering: `iptables -I` inserts at the TOP of the chain, so the LAST
+# rule inserted is evaluated FIRST. iptables is first-match-wins. We therefore
+# insert the DROP rules first and the fileserver ACCEPT LAST, so ACCEPT lands
+# at position 1 (above the DROPs) — otherwise a fileserver on a private range
+# (the usual case, e.g. 10.x on the VM subnet) would be caught by a DROP.
 
-# ---- Block traffic to internal services -------------------------------------
+# ---- Block traffic to internal services (inserted first → end up lower) -----
 
 # Qdrant
 iptables -I FORWARD -i "$SANDBOX_BR" \
@@ -86,6 +87,13 @@ iptables -I FORWARD -i "$SANDBOX_BR" -d 10.0.0.0/8 -j DROP
 iptables -I FORWARD -i "$SANDBOX_BR" -d 172.16.0.0/12 -j DROP
 iptables -I FORWARD -i "$SANDBOX_BR" -d 192.168.0.0/16 -j DROP
 echo "  DROP   → RFC-1918 10/8, 172.16/12, 192.168/16"
+
+# ---- Allow MCP fileserver(s) LAST so it sits ABOVE the DROP rules -----------
+# Inserted last → position 1 → evaluated before the private-range DROPs, so the
+# fileserver stays reachable even when its IP is in a blocked RFC-1918 range.
+iptables -I FORWARD -i "$SANDBOX_BR" \
+    -d "$FILESERVER_IP" -p tcp --dport "$FILESERVER_PORT" -j ACCEPT
+echo "  ACCEPT → fileserver $FILESERVER_IP:$FILESERVER_PORT (above DROPs)"
 
 # ---- Public internet --------------------------------------------------------
 # Docker's default ACCEPT FORWARD policy + MASQUERADE rule already allow egress
