@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { streamChat } from "@/lib/api";
 import { queryKeys } from "@/lib/queries";
 import type {
+  ArtifactSummary,
   Attachment,
   PipelineStep,
   StepStatus,
@@ -23,12 +24,14 @@ export function useStreamChat(sessionId: string) {
   const [steps, setSteps] = useState<StepState[]>([]);
   const [streamedContent, setStreamedContent] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [currentArtifact, setCurrentArtifact] = useState<ArtifactSummary | null>(null);
   const abortRef = useRef(false);
 
   const reset = useCallback(() => {
     setSteps([]);
     setStreamedContent("");
     setError(null);
+    setCurrentArtifact(null);
   }, []);
 
   const abort = useCallback(() => {
@@ -75,6 +78,14 @@ export function useStreamChat(sessionId: string) {
             case "error":
               setError(event.message);
               break;
+            case "artifact":
+              setCurrentArtifact({
+                id: event.artifactId,
+                title: event.title,
+                latestVersion: event.version,
+                createdAt: new Date().toISOString(),
+              });
+              break;
             case "done":
               break;
             default:
@@ -99,6 +110,7 @@ export function useStreamChat(sessionId: string) {
     steps,
     streamedContent,
     error,
+    currentArtifact,
     abort,
     reset,
   };

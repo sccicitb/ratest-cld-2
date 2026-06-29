@@ -1,30 +1,41 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Database, Loader2 } from "lucide-react";
+import { Database, FileCode, Loader2 } from "lucide-react";
 
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { StepTracker } from "@/components/chat/StepTracker";
 import { InputBar } from "@/components/chat/InputBar";
 import { SourcesDrawer } from "@/components/chat/SourcesDrawer";
 import { ChunkingProgress } from "@/components/chat/ChunkingProgress";
+import { ArtifactCanvas } from "@/components/chat/ArtifactCanvas";
+import { ArtifactInlineCard } from "@/components/chat/ArtifactInlineCard";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useStreamChat } from "@/hooks/useStreamChat";
 import { useSessionIngestion } from "@/hooks/useSessionIngestion";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { useMessages, useSession } from "@/lib/queries";
-import type { Attachment } from "@/types/chat";
+import * as api from "@/lib/api";
+import type { ArtifactSummary, Attachment } from "@/types/chat";
 
 export default function ChatRoute() {
   const { sessionId = "" } = useParams();
   const { data: session } = useSession(sessionId);
   const { data: messages, isLoading } = useMessages(sessionId);
-  const { sendMessage, isStreaming, steps, streamedContent, reset, abort } =
+  const { sendMessage, isStreaming, steps, streamedContent, currentArtifact, reset, abort } =
     useStreamChat(sessionId);
   const { upload, tasks: ingestTasks } = useSessionIngestion(sessionId);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [canvasOpen, setCanvasOpen] = useState(false);
+
+  // Artifacts from the listing endpoint (reload).
+  const [artifacts, setArtifacts] = useState<ArtifactSummary[]>([]);
+  const [latestArtifact, setLatestArtifact] = useState<ArtifactSummary | null>(null);
+
+  // Track whether auto-open for the current stream event has fired.
+  const autoOpenFiredRef = useRef(false);
 
   const { scrollRef, scrollToBottom } = useAutoScroll(
     `${messages?.length}-${streamedContent.length}-${steps.length}-${ingestTasks.length}`,
@@ -33,7 +44,54 @@ export default function ChatRoute() {
   // Reset transient streaming UI when switching sessions.
   useEffect(() => {
     reset();
+    setArtifacts([]);
+    setLatestArtifact(null);
+    setCanvasOpen(false);
+    autoOpenFiredRef.current = false;
   }, [sessionId, reset]);
+
+  // Load artifacts on mount / session change (reload).
+  useEffect(() => {
+    let cancelled = false;
+    api.getArtifacts(sessionId).then((list) => {
+      if (cancelled) return;
+      setArtifacts(list);
+      if (list.length > 0) {
+        const latest = list.reduce((a, b) =>
+          a.latestVersion > b.latestVersion ? a : b,
+        );
+        setLatestArtifact(latest);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
+  // Auto-open canvas when a new artifact arrives via SSE.
+  useEffect(() => {
+    if (currentArtifact && !autoOpenFiredRef.current) {
+      autoOpenFiredRef.current = true;
+      setLatestArtifact(currentArtifact);
+      setArtifacts((prev) => {
+        const idx = prev.findIndex((a) => a.id === currentArtifact.id);
+        if (idx === -1) return [...prev, currentArtifact];
+        const copy = [...prev];
+        copy[idx] = currentArtifact;
+        return copy;
+      });
+      setCanvasOpen(true);
+    }
+    if (!currentArtifact) {
+      autoOpenFiredRef.current = false;
+    }
+  }, [currentArtifact]);
+
+  // Derived: which artifact to show in the canvas (SSE latest takes priority).
+  const canvasArtifact = latestArtifact;
+
+  const openCanvas = useCallback((artifact: ArtifactSummary) => {
+    setLatestArtifact(artifact);
+    setCanvasOpen(true);
+  }, []);
 
   const handleSend = async (message: string, files: File[]) => {
     // §6.1: upload every attachment first (multipart → SSE).  The backend
@@ -56,15 +114,28 @@ export default function ChatRoute() {
         <h1 className="truncate font-medium">
           {session?.title ?? "Chat"}
         </h1>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setSourcesOpen(true)}
-          className="gap-1.5"
-        >
-          <Database className="size-4" />
-          Sources
-        </Button>
+        <div className="flex items-center gap-2">
+          {artifacts.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCanvasOpen(true)}
+              className="gap-1.5"
+            >
+              <FileCode className="size-4" />
+              Artifacts
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSourcesOpen(true)}
+            className="gap-1.5"
+          >
+            <Database className="size-4" />
+            Sources
+          </Button>
+        </div>
       </header>
 
       {/* Message feed */}
@@ -114,6 +185,21 @@ export default function ChatRoute() {
         </div>
       </div>
 
+      {/* Inline artifact cards */}
+      {artifacts.length > 0 && (
+        <div className="shrink-0 border-t border-border px-4 py-2">
+          <div className="flex flex-wrap gap-2">
+            {artifacts.map((a) => (
+              <ArtifactInlineCard
+                key={a.id}
+                artifact={a}
+                onOpen={() => openCanvas(a)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Composer */}
       <div className="shrink-0">
         <InputBar
@@ -127,6 +213,13 @@ export default function ChatRoute() {
         sessionId={sessionId}
         open={sourcesOpen}
         onOpenChange={setSourcesOpen}
+      />
+
+      <ArtifactCanvas
+        sessionId={sessionId}
+        artifact={canvasArtifact}
+        open={canvasOpen}
+        onOpenChange={setCanvasOpen}
       />
     </div>
   );
