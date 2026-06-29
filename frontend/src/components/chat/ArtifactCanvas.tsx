@@ -92,8 +92,19 @@ export function ArtifactCanvas({
     }
   }, [artifact, open, load, revoke]);
 
+  // Chrome blocks contentWindow.print() on sandboxed iframes even with
+  // allow-modals — calling print() is silently swallowed.  Our fallback
+  // opens the Blob URL in a new tab instead (native print works there).
   const handlePrint = () => {
-    iframeRef.current?.contentWindow?.print();
+    if (state.tag === "ready") {
+      const w = window.open(state.blobUrl, "_blank");
+      // Try to auto-open the print dialog in the new tab after it loads.
+      // Popup blockers may prevent the new window or the print() call, but
+      // the tab itself always opens — user can Ctrl‑P from there.
+      if (w) {
+        try { w.print(); } catch { /* blocked */ }
+      }
+    }
   };
 
   const handleOpenNewTab = () => {
