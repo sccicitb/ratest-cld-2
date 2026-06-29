@@ -104,7 +104,10 @@ def _cap_images(messages: list[dict], cap: int) -> list[dict]:
         if image_count == 0:
             # Only a text block (or nothing) remains — collapse to plain string.
             text_blocks = [b for b in new_blocks if isinstance(b, dict) and b.get("type") == "text"]
-            plain = text_blocks[0]["text"] if text_blocks else (msg.get("content") or "")
+            # Always collapse to a string. `_content` always emits a leading text
+            # block, so text_blocks[0] is the normal case; the "" fallback guards
+            # against ever emitting a malformed array-with-no-images.
+            plain = text_blocks[0]["text"] if text_blocks else ""
             result.append({**msg, "content": plain})
         else:
             result.append({**msg, "content": new_blocks})
