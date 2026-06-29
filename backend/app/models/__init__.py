@@ -123,6 +123,59 @@ class KBFile(Base):
     storage_key: Mapped[str] = mapped_column(String)
 
 
+# ---------------------------------------------------------------------------
+# v1.1 Artifacts pillar (§Stage A1): model-authored HTML report artifacts
+# ---------------------------------------------------------------------------
+
+
+class Artifact(Base):
+    """A versioned HTML report artifact created by the model via `create_artifact`.
+
+    Owned by a session (cascade-deletes with it). Each Artifact has one or more
+    ArtifactVersion rows whose storage_key points to a blob in blob_dir.
+    """
+
+    __tablename__ = "artifacts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String)
+    latest_version: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    versions: Mapped[list["ArtifactVersion"]] = relationship(
+        back_populates="artifact", cascade="all, delete-orphan"
+    )
+
+
+class ArtifactVersion(Base):
+    """One snapshot of an Artifact's HTML content.
+
+    Sequentially numbered per artifact (1, 2, ...). Optionally linked to
+    the assistant message that produced it.
+    """
+
+    __tablename__ = "artifact_versions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("artifacts.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    storage_key: Mapped[str] = mapped_column(String)
+    message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    artifact: Mapped["Artifact"] = relationship(back_populates="versions")
+
+
 __all__ = [
     "User",
     "RefreshToken",
@@ -130,4 +183,6 @@ __all__ = [
     "Message",
     "Attachment",
     "KBFile",
+    "Artifact",
+    "ArtifactVersion",
 ]

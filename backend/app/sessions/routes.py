@@ -13,7 +13,7 @@ from app.auth.deps import CurrentUser, DbSession
 from app.config import settings
 from app.errors import ApiError
 from app.kb.routes import get_qdrant
-from app.models import ChatSession, KBFile, Message
+from app.models import Artifact, ArtifactVersion, ChatSession, KBFile, Message
 from app.rag.vectors import delete_by_session
 from app.schemas import MessageOut, RenameSessionRequest, SessionOut
 from app.storage import delete_blob
@@ -79,6 +79,17 @@ def delete_session(session_id: str, user: CurrentUser, db: DbSession, client: Qd
     ):
         try:
             delete_blob(kbf.storage_key)
+        except Exception:
+            pass
+    # Clean up artifact HTML blobs before the rows cascade.
+    for av in (
+        db.query(ArtifactVersion)
+        .join(Artifact)
+        .filter(Artifact.session_id == session_id)
+        .all()
+    ):
+        try:
+            delete_blob(av.storage_key)
         except Exception:
             pass
     # §13: best-effort sandbox container teardown — must NOT block deletion.

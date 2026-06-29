@@ -35,3 +35,13 @@ def done(message_id: str) -> dict:
 
 def error(message: str) -> dict:
     return {"type": "error", "message": message}
+
+
+def artifact(artifactId: str, version: int, title: str) -> dict:  # noqa: N803 - camelCase wire contract
+    """v1.1 Stage A1: model-authored HTML report artifact created/updated."""
+    return {
+        "type": "artifact",
+        "artifactId": artifactId,
+        "version": version,
+        "title": title,
+    }

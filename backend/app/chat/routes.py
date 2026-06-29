@@ -26,6 +26,7 @@ from app.models import Attachment, ChatSession
 from app.rag.embedder import Embedder
 from app.rag.extract import extract_text
 from app.sse import sse
+from app.tools.builtin.create_artifact import CreateArtifact
 from app.tools.builtin.execute_code import ExecuteCode
 from app.tools.builtin.search_kb import SearchKnowledgeBase
 from app.tools.context import ToolContext
@@ -60,6 +61,7 @@ def _build_registry(mcp_tools: list[Tool]) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(SearchKnowledgeBase())
     registry.register(ExecuteCode())
+    registry.register(CreateArtifact())
     for t in mcp_tools:
         registry.register(t)
     return registry

@@ -7,7 +7,7 @@ model-supplied tool-call `args`. See `app/tools/builtin/search_kb.py`.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from qdrant_client import QdrantClient
@@ -23,3 +23,5 @@ class ToolContext:
     client: QdrantClient
     embedder: Embedder
     on_progress: Callable[[str], None] | None = None
+    pending_artifacts: list[dict] = field(default_factory=list)
+    """Populated by `create_artifact`; drained by the loop for SSE events + message linkage."""
