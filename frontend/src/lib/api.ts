@@ -6,6 +6,7 @@
  */
 import type { AuthResponse, LoginCredentials, User } from "@/types/api";
 import type {
+  ArtifactSummary,
   Attachment,
   Message,
   Session,
@@ -216,4 +217,26 @@ export async function fetchAttachmentObjectUrl(
   );
   const blob = await res.blob();
   return URL.createObjectURL(blob);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Artifacts                                                          */
+/* ------------------------------------------------------------------ */
+
+export const getArtifacts = (sessionId: string): Promise<ArtifactSummary[]> =>
+  req(`/api/sessions/${sessionId}/artifacts`, { headers: authHeaders() }).then(
+    (r) => r.json(),
+  );
+
+export async function fetchArtifactHtml(
+  sessionId: string,
+  artifactId: string,
+  version?: number,
+): Promise<string> {
+  const qs = version != null ? `?version=${version}` : "";
+  const res = await req(
+    `/api/sessions/${sessionId}/artifacts/${artifactId}/raw${qs}`,
+    { headers: authHeaders() },
+  );
+  return res.text();
 }

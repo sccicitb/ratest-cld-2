@@ -78,12 +78,28 @@ export interface ErrorEvent {
   message: string;
 }
 
+export interface ArtifactEvent {
+  type: "artifact";
+  artifactId: string;
+  version: number;
+  title: string;
+}
+
 export type StreamEvent =
   | StepEvent
   | TokenEvent
   | ChunkProgressEvent
   | DoneEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | ArtifactEvent;
+
+/** Returned by GET /api/sessions/{sid}/artifacts */
+export interface ArtifactSummary {
+  id: string;
+  title: string;
+  latestVersion: number;
+  createdAt: string;
+}
 
 // --- Upload-stream events (§3 of the backend spec) — separate vocabulary ---
 // These come from the multipart→SSE upload endpoints (attachment upload §6.1
