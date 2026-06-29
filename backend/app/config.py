@@ -67,5 +67,11 @@ class Settings(BaseSettings):
     #     convenience only (§2). ---
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    # --- SPA serving (§11 prod): path to the built frontend (e.g. frontend/build/client).
+    #     None (default) = disabled; Vite dev-proxy is used instead.
+    #     When set AND the dir exists, FastAPI serves the SPA at / and falls back to
+    #     index.html for client-side routes (see app/main.py _mount_spa). ---
+    spa_dir: str | None = None
+
 
 settings = Settings()
