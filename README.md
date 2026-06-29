@@ -9,38 +9,38 @@ session-scoped ingestion of large chat attachments.
 ```
 ratest-cld-2/
 ├── frontend/            # React 19 + React Router v8 SPA (TypeScript)
-├── backend/             # FastAPI + Qdrant + FastEmbed (Python)
+├── backend/             # FastAPI + Qdrant + FlagEmbedding (Python)
+│   └── sandbox/         # code-exec sandbox (§13): runner image + docker-py service
 ├── docs/
 │   └── BACKEND_SPEC.md  # the contract between the two — LOCKED for v1
 ├── docker-compose.yml   # dev infra (Qdrant)
 └── README.md
 ```
 
-The **frontend** is complete and runs today against an in-memory mock
-(`frontend/src/lib/mock.ts`). The **backend** implements
-[`docs/BACKEND_SPEC.md`](docs/BACKEND_SPEC.md); when it's live, the frontend's
-`api.ts` swaps its mock delegates for real `fetch` calls (plus the file-upload,
-send-sequencing, and auth changes the spec enumerates in §1).
+The **frontend** (React SPA) is wired to the real **backend** (FastAPI), which
+implements [`docs/BACKEND_SPEC.md`](docs/BACKEND_SPEC.md). The full v1 is
+implemented — agentic retrieval, KB ingestion (+ OCR), the SSE chat tool-loop,
+chat attachments, **MCP external tools**, and the **`execute_code` sandbox**.
+Remaining work is production deployment.
 
-## Run the frontend
+## Run it
 
-```bash
-cd frontend
-npm install
-npm run dev          # http://localhost:5173  (Node ≥ 22.22)
-```
-Sign in with any credentials (mock auth). See [`frontend/README.md`](frontend/README.md).
-
-## Run the backend
+The full stack is **four services** (Qdrant, the code-exec sandbox service, the
+backend, and the frontend) plus an optional MCP server. The authoritative,
+step-by-step runbook lives in **[`backend/README.md`](backend/README.md)** — start
+there. Quick version:
 
 ```bash
-docker compose up -d qdrant     # vector store
-cd backend
-cp .env.example .env
-uv sync
-uv run uvicorn app.main:app --reload --port 8000
+# infra + sandbox image (once)
+docker compose up -d qdrant
+cd backend && docker build -t rag-sandbox sandbox/runner && uv run python -m app.seed
+
+# then, each in its own terminal:
+uv run uvicorn sandbox.service.main:app --port 8001                  # sandbox service
+COOKIE_SECURE=false uv run uvicorn app.main:app --port 8000          # backend
+cd ../frontend && npm install && npm run dev                        # http://localhost:5173
 ```
-See [`backend/README.md`](backend/README.md).
+Sign in with **demo@example.com / demo1234**.
 
 ## Architecture at a glance
 
@@ -52,8 +52,12 @@ See [`backend/README.md`](backend/README.md).
   The decision is **token-based**, made server-side after parsing.
 - **One vector store, two scopes:** the persistent Knowledge Base (`kb`) and
   per-conversation files (`session`).
+- **Three agent tools:** `search_knowledge_base` (native, scoped retrieval),
+  external tools over **MCP** (e.g. satudata), and **`execute_code`** (a
+  sandboxed Python runtime that fetches/analyzes large tool results). Adding a
+  tool changes the registry, not the loop.
 - **Self-hosted, model-agnostic:** the chat model is any OpenAI-compatible
-  endpoint; embeddings/rerank run in-process (FastEmbed / BGE-M3).
+  endpoint; embeddings/rerank run in-process (FlagEmbedding / BGE-M3).
 
 Full design, endpoint contracts, SSE event shapes, schema, and the acceptance
 checklist live in [`docs/BACKEND_SPEC.md`](docs/BACKEND_SPEC.md).
