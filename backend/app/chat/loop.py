@@ -22,6 +22,7 @@ Locked algorithm — see `.superpowers/sdd/stage-5-brief.md` §7:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -31,10 +32,87 @@ from app.chat.client import ModelChunk, ModelClient
 from app.chat.events import done, error, step, token
 from app.config import settings
 from app.models import Attachment, ChatSession, Message
+from app.storage import open_blob
 from app.tools.context import ToolContext
 from app.tools.registry import ToolError, ToolRegistry
 
 TITLE_MAX_LEN = 40
+
+
+# ---------------------------------------------------------------------------
+# Vision helpers (V2)
+# ---------------------------------------------------------------------------
+
+
+def _is_image_att(att: Attachment) -> bool:
+    return att.file_type.startswith("image/")
+
+
+def _image_block(att: Attachment) -> dict:
+    with open_blob(att.url) as fh:
+        b64 = base64.b64encode(fh.read()).decode()
+    return {"type": "image_url", "image_url": {"url": f"data:{att.file_type};base64,{b64}"}}
+
+
+def _content(text: str, attachments: list[Attachment]) -> str | list:
+    """Return a plain string when no image attachments; otherwise an OpenAI content array."""
+    image_atts = [a for a in attachments if _is_image_att(a)]
+    if not image_atts:
+        return text
+    blocks: list[dict] = [{"type": "text", "text": text}]
+    blocks.extend(_image_block(a) for a in image_atts)
+    return blocks
+
+
+def _cap_images(messages: list[dict], cap: int) -> list[dict]:
+    """Keep only the most-recent `cap` image_url blocks across all messages.
+
+    Walks newest→oldest.  Blocks beyond the budget are dropped.  If a message
+    loses all its image blocks and its content-array collapses to just a text
+    block, that message's content reverts to the plain text string.
+    """
+    # Count total images to decide whether capping is needed.
+    def _count_images(msgs: list[dict]) -> int:
+        total = 0
+        for m in msgs:
+            c = m.get("content")
+            if isinstance(c, list):
+                total += sum(1 for b in c if isinstance(b, dict) and b.get("type") == "image_url")
+        return total
+
+    if _count_images(messages) <= cap:
+        return messages
+
+    budget = cap
+    result: list[dict] = []
+    for msg in reversed(messages):
+        c = msg.get("content")
+        if not isinstance(c, list):
+            result.append(msg)
+            continue
+        new_blocks: list[dict] = []
+        for block in c:
+            if isinstance(block, dict) and block.get("type") == "image_url":
+                if budget > 0:
+                    new_blocks.append(block)
+                    budget -= 1
+                # else drop the block
+            else:
+                new_blocks.append(block)
+        # Collapse a content-array that has no image blocks left.
+        image_count = sum(1 for b in new_blocks if isinstance(b, dict) and b.get("type") == "image_url")
+        if image_count == 0:
+            # Only a text block (or nothing) remains — collapse to plain string.
+            text_blocks = [b for b in new_blocks if isinstance(b, dict) and b.get("type") == "text"]
+            plain = text_blocks[0]["text"] if text_blocks else (msg.get("content") or "")
+            result.append({**msg, "content": plain})
+        else:
+            result.append({**msg, "content": new_blocks})
+
+    return list(reversed(result))
+
+
+# ---------------------------------------------------------------------------
 
 
 def _auto_title(message: str) -> str:
@@ -45,8 +123,16 @@ def _auto_title(message: str) -> str:
 
 
 def _history_messages(session: ChatSession) -> list[dict]:
-    """Map persisted `Message`s (oldest-first) to OpenAI `{role, content}`."""
-    return [{"role": m.role, "content": m.content} for m in session.messages]
+    """Map persisted `Message`s (oldest-first) to OpenAI `{role, content}`.
+
+    User messages that had image attachments re-emit their image blocks so the
+    model can still see them on follow-up turns (V2 vision re-feed).
+    """
+    out = []
+    for m in session.messages:
+        atts: list[Attachment] = m.attachments or []
+        out.append({"role": m.role, "content": _content(m.content, atts)})
+    return out
 
 
 def _scope_label(ctx: ToolContext) -> str:
@@ -101,7 +187,16 @@ async def run_turn(
         session.updated_at = datetime.now(timezone.utc)
         db.commit()
 
-        messages = history + [{"role": "user", "content": model_content or message}]
+        # Build this turn's user message, including any image attachments.
+        current_image_atts: list[Attachment] = []
+        if attachment_ids:
+            for aid in attachment_ids:
+                att = db.get(Attachment, aid)
+                if att is not None and _is_image_att(att):
+                    current_image_atts.append(att)
+        current_content = _content(model_content or message, current_image_atts)
+        messages = history + [{"role": "user", "content": current_content}]
+        messages = _cap_images(messages, settings.max_vision_images_per_turn)
 
         yield step("thinking", "active")
 
