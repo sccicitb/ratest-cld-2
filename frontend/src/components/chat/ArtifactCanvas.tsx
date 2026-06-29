@@ -108,7 +108,7 @@ export function ArtifactCanvas({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className={`flex w-full flex-col gap-0 p-0 ${maxW}`}>
         {/* Header */}
-        <SheetHeader className="shrink-0 border-b border-border p-5">
+        <SheetHeader className="shrink-0 border-b border-border p-5 pr-14">
           <div className="flex items-center gap-2">
             <FileCode className="size-5 shrink-0 text-brand-blue" />
             <SheetTitle className="min-w-0 flex-1 truncate">
@@ -129,7 +129,7 @@ export function ArtifactCanvas({
             >
               {expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
             </Button>
-            {/* Actions (right-aligned, before the Sheet's built-in X) */}
+            {/* Actions (right-aligned, with clearance from Sheet's built-in X) */}
             <div className="ml-auto flex items-center gap-1">
               {state.tag === "ready" && (
                 <>
