@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     # --- Ingress routing (§6) ---
     inline_token_budget: int = 6000          # tokens, not bytes — the real gate
     max_upload_bytes: int = 100 * 1024 * 1024  # sanity ceiling (§11)
+    # --- Vision (§v1.1-V1): per-image blob size cap (10 MB default) ---
+    max_image_bytes: int = 10 * 1024 * 1024
 
     # --- OCR (§6, §8.1): Surya, in-process, only for thin/absent text layers ---
     ocr_enabled: bool = True

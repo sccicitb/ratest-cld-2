@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from qdrant_client import QdrantClient
 
 from app.auth.deps import CurrentUser, DbSession
+from app.config import settings
 from app.errors import ApiError
 from app.kb import repo as kb_repo
 from app.kb.routes import get_embedder_dep, get_qdrant
@@ -26,7 +27,7 @@ from app.rag.tokens import route_by_tokens
 from app.rag.vectors import update_file_payload
 from app.schemas import AttachmentOut, KnowledgeBaseFileOut
 from app.sse import sse
-from app.storage import save_upload
+from app.storage import delete_blob, open_blob, save_upload
 
 router = APIRouter()
 
@@ -49,6 +50,16 @@ class _SyncUpload:
 
     def read(self) -> bytes:
         return self._fileobj.read()
+
+
+_IMAGE_EXTENSIONS: frozenset[str] = frozenset({".png", ".jpg", ".jpeg"})
+
+
+def _is_image(filename: str, content_type: str | None) -> bool:
+    """True when the file is a recognised raster image type."""
+    if content_type and content_type.startswith("image/"):
+        return True
+    return Path(filename).suffix.lower() in _IMAGE_EXTENSIONS
 
 
 def _owned(db: DbSession, user_id: str, session_id: str) -> ChatSession:
@@ -77,19 +88,67 @@ async def upload_attachments(
     async def _stream():
         for file in files:
             try:
+                name = file.filename or ""
+                content_type = file.content_type
+
+                # ---- Image path (V1.1): store blob, skip extraction entirely. ----
+                if _is_image(name, content_type):
+                    file.file.seek(0)
+                    storage_key, size = save_upload(_SyncUpload(name, file.file))
+                    if size > settings.max_image_bytes:
+                        delete_blob(storage_key)
+                        limit_mb = settings.max_image_bytes / (1024 * 1024)
+                        yield sse(
+                            {
+                                "type": "error",
+                                "message": f"{name} exceeds the {limit_mb:.0f} MB image limit",
+                            }
+                        )
+                        continue
+
+                    # Trust the content-type only if it's actually an image type;
+                    # otherwise (missing/generic, e.g. application/octet-stream)
+                    # derive it from the extension so the bytes are served as an
+                    # image the browser will render inline.
+                    ext = Path(name).suffix.lower().lstrip(".")
+                    if content_type and content_type.startswith("image/"):
+                        file_type = content_type
+                    else:
+                        file_type = f"image/{'jpeg' if ext == 'jpg' else ext}"
+                    att = Attachment(
+                        message_id=None,
+                        file_name=name or storage_key,
+                        file_type=file_type,
+                        file_size=size,
+                        url=storage_key,
+                        ingested=False,
+                    )
+                    db.add(att)
+                    db.commit()
+                    db.refresh(att)
+                    out = AttachmentOut.model_validate(att)
+                    yield sse(
+                        {
+                            "type": "attachment_resolved",
+                            "attachment": out.model_dump(mode="json", by_alias=True),
+                        }
+                    )
+                    continue
+
+                # ---- Text path: persist blob, extract, route. ----
                 # Persist the raw blob.
                 file.file.seek(0)
-                storage_key, size = save_upload(_SyncUpload(file.filename, file.file))
+                storage_key, size = save_upload(_SyncUpload(name, file.file))
 
                 # Extract text and decide route.
-                text = extract_text(storage_key, file.filename or storage_key)
+                text = extract_text(storage_key, name or storage_key)
                 decision = route_by_tokens(text)
 
                 if decision == "inline":
                     att = Attachment(
                         message_id=None,
-                        file_name=file.filename or storage_key,
-                        file_type=file.content_type or Path(file.filename or "").suffix,
+                        file_name=name or storage_key,
+                        file_type=content_type or Path(name).suffix,
                         file_size=size,
                         url=storage_key,
                         ingested=False,
@@ -109,8 +168,8 @@ async def upload_attachments(
                     # async ingest pipeline, streaming chunk_progress events.
                     att = Attachment(
                         message_id=None,
-                        file_name=file.filename or storage_key,
-                        file_type=file.content_type or Path(file.filename or "").suffix,
+                        file_name=name or storage_key,
+                        file_type=content_type or Path(name).suffix,
                         file_size=size,
                         url=storage_key,
                         ingested=True,
@@ -119,7 +178,7 @@ async def upload_attachments(
                     kb_file = kb_repo.create(
                         db,
                         user_id=user.id,
-                        name=file.filename or storage_key,
+                        name=name or storage_key,
                         size=size,
                         storage_key=storage_key,
                         scope="session",
@@ -202,3 +261,42 @@ def promote_session_file(
     update_file_payload(client, file_id, {"scope": "kb", "session_id": None})
 
     return kb_file
+
+
+# ---------------------------------------------------------------------------
+# GET /sessions/{id}/attachments/{attachment_id}/raw  (V1.2)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{session_id}/attachments/{attachment_id}/raw")
+def get_attachment_raw(
+    session_id: str,
+    attachment_id: str,
+    user: CurrentUser,
+    db: DbSession,
+) -> Response:
+    """Serve a stored attachment blob, scoped + auth'd.
+
+    The attachment must be linked to a Message in THIS session — freshly
+    uploaded but not-yet-sent attachments return 404 (the composer previews
+    locally; this endpoint serves persisted/in-history attachments).
+    """
+    _owned(db, user.id, session_id)
+
+    att = db.get(Attachment, attachment_id)
+    if (
+        att is None
+        or att.message is None
+        or att.message.session_id != session_id
+    ):
+        raise ApiError(404, "not_found", "Attachment not found")
+
+    media_type = att.file_type or "application/octet-stream"
+    blob = open_blob(att.url)
+    content = blob.read()
+    blob.close()
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
