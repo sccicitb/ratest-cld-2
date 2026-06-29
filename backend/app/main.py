@@ -65,6 +65,14 @@ def _mount_spa(target: FastAPI) -> None:
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Apply any pending Alembic migrations before wiring routes — no manual
+    # `alembic upgrade head` on deploy is needed.
+    from alembic.config import Config as AlembicConfig
+    from alembic import command
+
+    alembic_cfg = AlembicConfig("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
+
     manager = MCPManager(load_mcp_config())
     try:
         tools = await manager.connect_all()
