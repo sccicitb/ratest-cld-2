@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { motion } from "framer-motion";
 import {
   Database,
+  Ear,
   MessageSquarePlus,
   PanelLeftClose,
   PanelLeftOpen,
@@ -139,6 +140,13 @@ export function Sidebar() {
             label="Knowledge base"
             to="/knowledge-base"
             active={location.pathname === "/knowledge-base"}
+          />
+          <SidebarAction
+            collapsed={collapsed}
+            icon={<Ear className="size-5" />}
+            label="Tlinga"
+            to="/tlinga"
+            active={location.pathname === "/tlinga"}
           />
         </SidebarSection>
 

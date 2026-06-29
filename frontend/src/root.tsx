@@ -44,6 +44,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>CityA</title>
+        {/* Pre-warm TLS + DNS for the Tlinga iframe so the map loads instantly. */}
+        <link rel="preconnect" href="https://tlingagram.devserver.web.id" />
         <Meta />
         <Links />
       </head>
