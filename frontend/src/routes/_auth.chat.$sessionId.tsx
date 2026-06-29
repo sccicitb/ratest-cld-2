@@ -66,10 +66,10 @@ export default function ChatRoute() {
     return () => { cancelled = true; };
   }, [sessionId]);
 
-  // Auto-open canvas when a new artifact arrives via SSE.
+  // Auto-open canvas when a new artifact arrives via SSE, and always update
+  // the latest artifact state (so v2 of the same artifact overwrites v1).
   useEffect(() => {
-    if (currentArtifact && !autoOpenFiredRef.current) {
-      autoOpenFiredRef.current = true;
+    if (currentArtifact) {
       setLatestArtifact(currentArtifact);
       setArtifacts((prev) => {
         const idx = prev.findIndex((a) => a.id === currentArtifact.id);
@@ -78,7 +78,12 @@ export default function ChatRoute() {
         copy[idx] = currentArtifact;
         return copy;
       });
-      setCanvasOpen(true);
+      // Only fire auto-open once per stream burst; v2 updating the canvas
+      // is handled above regardless of this ref.
+      if (!autoOpenFiredRef.current) {
+        autoOpenFiredRef.current = true;
+        setCanvasOpen(true);
+      }
     }
     if (!currentArtifact) {
       autoOpenFiredRef.current = false;
