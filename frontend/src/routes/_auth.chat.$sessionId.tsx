@@ -158,6 +158,21 @@ export default function ChatRoute() {
             <MessageBubble key={message.id} message={message} />
           ))}
 
+          {/* Artifact cards live with the chat history — they appear after
+              the assistant message that produced them, or at the end of the
+              feed for reloaded artifacts. */}
+          {!isLoading && artifacts.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {artifacts.map((a) => (
+                <ArtifactInlineCard
+                  key={a.id}
+                  artifact={a}
+                  onOpen={() => openCanvas(a)}
+                />
+              ))}
+            </div>
+          )}
+
           {ingestTasks.map((task) => (
             <ChunkingProgress
               key={task.fileName}
@@ -189,21 +204,6 @@ export default function ChatRoute() {
           )}
         </div>
       </div>
-
-      {/* Inline artifact cards */}
-      {artifacts.length > 0 && (
-        <div className="shrink-0 border-t border-border px-4 py-2">
-          <div className="flex flex-wrap gap-2">
-            {artifacts.map((a) => (
-              <ArtifactInlineCard
-                key={a.id}
-                artifact={a}
-                onOpen={() => openCanvas(a)}
-              />
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Composer */}
       <div className="shrink-0">

@@ -16,9 +16,6 @@ export function ArtifactInlineCard({
       <FileCode className="size-4 shrink-0 text-brand-blue" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{artifact.title}</p>
-        <p className="text-xs text-muted-foreground">
-          v{artifact.latestVersion}
-        </p>
       </div>
       <Badge variant="secondary" className="shrink-0 text-xs">
         v{artifact.latestVersion}
