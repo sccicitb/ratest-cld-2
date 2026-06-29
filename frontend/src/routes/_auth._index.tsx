@@ -32,7 +32,7 @@ export default function IndexRoute() {
         <Sparkles className="size-7 text-brand-blue" />
       </div>
       <div>
-        <h1 className="text-2xl font-semibold">Welcome to RAG Chat</h1>
+        <h1 className="text-2xl font-semibold">Welcome to CityA</h1>
         <p className="mt-1 max-w-md text-muted-foreground">
           Start a conversation grounded in your knowledge base.
         </p>

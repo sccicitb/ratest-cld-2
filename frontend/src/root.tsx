@@ -43,7 +43,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>RAG Chat</title>
+        <title>CityA</title>
         <Meta />
         <Links />
       </head>
@@ -59,12 +59,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
 function SplashScreen() {
   return (
     <div className="flex h-dvh w-full flex-col items-center justify-center gap-4 bg-background">
-      <div className="flex size-14 items-center justify-center rounded-2xl bg-brand-red text-2xl font-bold text-white">
-        R
+      <div className="flex size-14 items-center justify-center rounded-2xl bg-primary text-2xl font-bold text-primary-foreground">
+        CA
       </div>
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />
-        Loading RAG Chat…
+        Loading CityA…
       </div>
     </div>
   );
