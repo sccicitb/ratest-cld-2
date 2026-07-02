@@ -462,10 +462,18 @@ it can inject scope — see below) and returns the result to the model as a
 
 **Scope is injected server-side, not by the model.** When the model calls the
 tool, the backend embeds the query with BGE-M3 (dense + sparse) and runs a
-**hybrid search in Qdrant**, filtered to this user's `kb` files **plus** this
-conversation's `session` files. The filter is applied on the chunk **payload**
-(scope fields are denormalized onto every point — see §8.1/§9.2), since Qdrant
-has no joins:
+**hybrid search in Qdrant**, filtered to the **KB the caller can access** (v1.1:
+org-shared, group-gated — see below) **plus** this conversation's private
+`session` files. The filter is applied on the chunk **payload** (scope fields are
+denormalized onto every point — see §8.1/§9.2), since Qdrant has no joins:
+
+> **v1.1 access change (Pillar 2).** The `kb` scope is no longer per-user. A KB
+> doc belongs to exactly one **group** (+ an `is_public` flag), and a caller sees
+> a `kb` doc when it is public **or** its group is one of the caller's groups.
+> **Session** files stay strictly private to the uploader. The denormalized
+> payload gains `group_id` + `is_public` (in place of `user_id` for `kb` chunks;
+> `user_id` is still carried for `session` chunks). `caller_group_ids` comes from
+> the caller's group membership (§M2), never from the model.
 
 ```
 query_outputs = bge_m3.encode(query)          # → {dense, sparse}
@@ -478,11 +486,16 @@ qdrant.query_points(
   ],
   query  = FusionQuery(fusion=RRF),           # merge dense + sparse
   filter = Filter(must=[
-    Match("user_id", :user),
     Match("status",  "ready"),
-    Should([                                  # kb OR (session AND this session)
-      Match("scope", "kb"),
-      Must([ Match("scope","session"), Match("session_id", :session) ]),
+    Should([                                  # (accessible kb) OR (this session's private files)
+      # v1.1: org-shared KB, group-gated (public OR one of the caller's groups)
+      Must([ Match("scope","kb"),
+             Should([ Match("is_public", True),
+                      MatchAny("group_id", :caller_group_ids) ]) ]),
+      # session files stay private to the uploader
+      Must([ Match("scope","session"),
+             Match("session_id", :session),
+             Match("user_id", :user) ]),
     ]),
   ]),
   limit = :k,                                 # final top-k (e.g. 5)
