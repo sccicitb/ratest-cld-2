@@ -14,13 +14,10 @@ from app.schemas import CreateUserRequest, PatchUserRequest, ResetPasswordRespon
 router = APIRouter()
 
 
-def _uuid_str() -> str:
-    import uuid
-    return str(uuid.uuid4())
-
-
 @router.post("/users", response_model=UserOut, status_code=201)
 def create_user(body: CreateUserRequest, _admin: AdminUser, db: DbSession) -> UserOut:
+    if len(body.password) < 8:
+        raise ApiError(400, "invalid_password", "Password must be at least 8 characters")
     existing = db.query(User).filter(User.email == body.email.lower()).first()
     if existing:
         raise ApiError(409, "email_taken", "A user with that email already exists")
