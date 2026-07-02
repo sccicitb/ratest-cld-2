@@ -65,7 +65,10 @@ class OpenAIModelClient:
 
         pending: dict[int, _PendingToolCall] = {}
 
+        print(kwargs)
+        print("-----------------")
         response = await self._client.chat.completions.create(**kwargs)
+        print(response)
         async for chunk in response:
             if not chunk.choices:
                 continue

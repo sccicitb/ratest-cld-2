@@ -80,10 +80,12 @@ def test_get_or_create_applies_all_four_walls(manager, mock_docker):
 
     kw = mock_client.containers.run.call_args[1]
 
-    # Privilege wall
+    # Privilege wall — non-root + all caps dropped. `no-new-privileges` is
+    # deliberately NOT set (breaks execve with EPERM on some kernel/runc combos;
+    # redundant given non-root + cap_drop=ALL).
     assert kw["user"] == "sandbox"
     assert kw["cap_drop"] == ["ALL"]
-    assert "no-new-privileges" in kw["security_opt"]
+    assert "security_opt" not in kw
 
     # Filesystem wall
     assert kw["read_only"] is True

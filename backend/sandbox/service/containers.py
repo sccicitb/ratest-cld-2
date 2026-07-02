@@ -65,10 +65,14 @@ class ContainerManager:
             detach=True,
             # Wall: network — isolated bridge, no route to Qdrant/app/DB
             network=settings.net,
-            # Wall: privilege — non-root user, drop all capabilities
+            # Wall: privilege — non-root user, drop all capabilities.
+            # NOTE: `no-new-privileges` is intentionally NOT set. On some
+            # kernel/runc combinations it makes the runner's execve fail with
+            # EPERM ("operation not permitted"). It's redundant here anyway:
+            # the container already runs as a non-root user with cap_drop=ALL,
+            # so there is no setuid path left to escalate through.
             user="sandbox",
             cap_drop=["ALL"],
-            security_opt=["no-new-privileges"],
             # Wall: resources — mem/CPU/pids caps
             mem_limit=settings.mem,
             nano_cpus=int(settings.cpus * 1e9),

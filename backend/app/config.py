@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     model_base_url: str = "https://llama.sccic.org/v1"
     model_name: str = "qwen"
     model_api_key: str = "not-needed"  # llama-server ignores it; set for hosted APIs
+    
+    # --- Chat model: any OpenAI-compatible endpoint (§7, §12) ---
+    # model_base_url: str = "https://api.deepseek.com"
+    # model_name: str = "deepseek-v4-flash"
+    # model_api_key: str = "sk-1de151cd91d84aa4ad2d0eb6ac699434"  # llama-server ignores it; set for hosted APIs
 
     # --- Embeddings / rerank: FlagEmbedding (BGE-M3), in-process (§8.1, §8.5) ---
     embed_model: str = "BAAI/bge-m3"
