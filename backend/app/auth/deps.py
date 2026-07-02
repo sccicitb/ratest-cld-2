@@ -29,8 +29,17 @@ def get_current_user(
     user = db.get(User, user_id)
     if not user:
         raise _unauthorized()
+    if user.disabled:
+        raise ApiError(403, "account_disabled", "Account is disabled")
+    return user
+
+
+def require_admin(user: Annotated[User, Depends(get_current_user)]) -> User:
+    if not user.is_admin:
+        raise ApiError(403, "forbidden", "Admin access required")
     return user
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
 DbSession = Annotated[Session, Depends(get_db)]
+AdminUser = Annotated[User, Depends(require_admin)]

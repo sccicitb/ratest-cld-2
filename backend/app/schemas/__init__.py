@@ -39,6 +39,9 @@ class UserOut(CamelModel):
     email: str
     display_name: str
     avatar_url: str | None = None
+    is_admin: bool = False
+    disabled: bool = False
+    created_at: datetime | None = None
 
 
 class AuthResponse(CamelModel):
@@ -98,6 +101,29 @@ class ArtifactOut(CamelModel):
     created_at: datetime
 
 
+# --- Admin (§M1) ---
+class CreateUserRequest(CamelModel):
+    email: str
+    display_name: str
+    password: str
+    is_admin: bool = False
+
+
+class PatchUserRequest(CamelModel):
+    disabled: bool | None = None
+    is_admin: bool | None = None
+    display_name: str | None = None
+
+
+class ResetPasswordResponse(CamelModel):
+    temp_password: str
+
+
+class ChangePasswordRequest(CamelModel):
+    old_password: str
+    new_password: str
+
+
 __all__ = [
     "CamelModel",
     "LoginRequest",
@@ -109,4 +135,8 @@ __all__ = [
     "MessageOut",
     "KnowledgeBaseFileOut",
     "ArtifactOut",
+    "CreateUserRequest",
+    "PatchUserRequest",
+    "ResetPasswordResponse",
+    "ChangePasswordRequest",
 ]

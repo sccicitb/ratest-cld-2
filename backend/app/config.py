@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     ocr_enabled: bool = True
     ocr_min_chars_per_page: int = 100  # below this average, treat the PDF as scanned
 
+    # --- Admin bootstrap (§M1) ---
+    admin_email: str | None = None
+    admin_password: str | None = None
+
     # --- Auth (§4, §10) ---
     jwt_secret: str = "dev-secret-change-me-please-32-bytes-minimum"
     access_token_ttl_minutes: int = 15

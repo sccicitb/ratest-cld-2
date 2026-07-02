@@ -1,4 +1,4 @@
-"""Auth endpoint tests (§4)."""
+"""Auth endpoint tests (§4) + M1 additions (change-password, disabled lockout)."""
 from __future__ import annotations
 
 
@@ -61,3 +61,59 @@ def test_logout_revokes_refresh(client, demo_user):
     # Cookie cleared → refresh no longer works.
     client.cookies.clear()
     assert client.post("/api/auth/refresh").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# change-password (§M1)
+# ---------------------------------------------------------------------------
+
+
+def test_change_password_wrong_old_400(client, auth_headers):
+    r = client.post(
+        "/api/auth/change-password",
+        json={"oldPassword": "wrongpass", "newPassword": "newpass1234"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 400
+    assert r.json()["code"] == "invalid_password"
+
+
+def test_change_password_too_short_400(client, auth_headers):
+    r = client.post(
+        "/api/auth/change-password",
+        json={"oldPassword": "demo1234", "newPassword": "short"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 400
+    assert r.json()["code"] == "password_too_short"
+
+
+def test_change_password_success(client, demo_user, auth_headers):
+    r = client.post(
+        "/api/auth/change-password",
+        json={"oldPassword": "demo1234", "newPassword": "newpassword1"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200, r.text
+
+    # Old password no longer works
+    r_old = client.post(
+        "/api/auth/login",
+        json={"email": demo_user["email"], "password": "demo1234"},
+    )
+    assert r_old.status_code == 401
+
+    # New password works
+    r_new = client.post(
+        "/api/auth/login",
+        json={"email": demo_user["email"], "password": "newpassword1"},
+    )
+    assert r_new.status_code == 200, r_new.text
+
+
+def test_change_password_requires_auth(client):
+    r = client.post(
+        "/api/auth/change-password",
+        json={"oldPassword": "demo1234", "newPassword": "newpassword1"},
+    )
+    assert r.status_code == 401

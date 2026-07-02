@@ -77,3 +77,33 @@ def auth_headers(client, demo_user) -> dict:
     )
     assert r.status_code == 200, r.text
     return {"Authorization": f"Bearer {r.json()['accessToken']}"}
+
+
+# --- Admin fixtures (§M1) ---
+
+
+@pytest.fixture()
+def admin_user(session_factory) -> dict:
+    db = session_factory()
+    user = User(
+        email="admin@example.com",
+        display_name="Admin User",
+        password_hash=hash_password("adminpass1"),
+        is_admin=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    out = {"id": user.id, "email": user.email, "password": "adminpass1"}
+    db.close()
+    return out
+
+
+@pytest.fixture()
+def admin_headers(client, admin_user) -> dict:
+    r = client.post(
+        "/api/auth/login",
+        json={"email": admin_user["email"], "password": admin_user["password"]},
+    )
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['accessToken']}"}
