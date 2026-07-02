@@ -42,6 +42,7 @@ class UserOut(CamelModel):
     is_admin: bool = False
     disabled: bool = False
     created_at: datetime | None = None
+    group_ids: list[str] = []
 
 
 class AuthResponse(CamelModel):
@@ -124,6 +125,39 @@ class ChangePasswordRequest(CamelModel):
     new_password: str
 
 
+# --- Groups (§M2) ---
+
+class GroupOut(CamelModel):
+    id: str
+    name: str
+    default_tags: list[str] = []
+    member_count: int = 0
+    created_at: datetime
+
+
+class GroupDetailOut(CamelModel):
+    id: str
+    name: str
+    default_tags: list[str] = []
+    member_count: int = 0
+    created_at: datetime
+    members: list[UserOut] = []
+
+
+class CreateGroupRequest(CamelModel):
+    name: str
+    default_tags: list[str] = []
+
+
+class UpdateGroupRequest(CamelModel):
+    name: str | None = None
+    default_tags: list[str] | None = None
+
+
+class GroupMembersRequest(CamelModel):
+    user_ids: list[str]
+
+
 __all__ = [
     "CamelModel",
     "LoginRequest",
@@ -139,4 +173,9 @@ __all__ = [
     "PatchUserRequest",
     "ResetPasswordResponse",
     "ChangePasswordRequest",
+    "GroupOut",
+    "GroupDetailOut",
+    "CreateGroupRequest",
+    "UpdateGroupRequest",
+    "GroupMembersRequest",
 ]
