@@ -1,4 +1,4 @@
-"""Auth endpoints (§4): login, refresh (rotation), me, logout."""
+"""Auth endpoints (§4): login, refresh (rotation), me, logout, change-password."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -11,7 +11,7 @@ from app.auth.deps import CurrentUser, DbSession
 from app.config import settings
 from app.errors import ApiError
 from app.models import RefreshToken, User
-from app.schemas import AuthResponse, LoginRequest, UserOut
+from app.schemas import AuthResponse, ChangePasswordRequest, LoginRequest, UserOut
 
 router = APIRouter()
 
@@ -53,6 +53,8 @@ def login(body: LoginRequest, response: Response, db: DbSession) -> AuthResponse
     user = db.query(User).filter(User.email == body.email.lower()).first()
     if not user or not security.verify_password(body.password, user.password_hash):
         raise ApiError(401, "invalid_credentials", "Invalid credentials")
+    if user.disabled:
+        raise ApiError(403, "account_disabled", "Account is disabled")
     _issue_refresh(db, response, user.id)
     return _auth_response(user, security.create_access_token(user.id))
 
@@ -118,4 +120,15 @@ def logout(
         ).update({RefreshToken.revoked: True})
         db.commit()
     response.delete_cookie(_COOKIE, path=_COOKIE_PATH)
+    return {}
+
+
+@router.post("/change-password")
+def change_password(body: ChangePasswordRequest, user: CurrentUser, db: DbSession) -> dict:
+    if not security.verify_password(body.old_password, user.password_hash):
+        raise ApiError(400, "invalid_password", "Current password is incorrect")
+    if len(body.new_password) < 8:
+        raise ApiError(400, "password_too_short", "New password must be at least 8 characters")
+    user.password_hash = security.hash_password(body.new_password)
+    db.commit()
     return {}

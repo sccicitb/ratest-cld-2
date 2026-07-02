@@ -71,7 +71,6 @@ async def lifespan(app: FastAPI):
     # logger + all handlers and silently drops uvicorn's access-log handler.
     # Save and restore the logging state around the migration so uvicorn's
     # access logs survive.
-    import logging
     import logging.config as lc
 
     from alembic.config import Config as AlembicConfig
@@ -88,6 +87,12 @@ async def lifespan(app: FastAPI):
     finally:
         lc.fileConfig = _saved
 
+    # Admin bootstrap — idempotent, never crashes startup.
+    try:
+        _bootstrap_admin()
+    except Exception:
+        log.exception("Admin bootstrap failed — continuing without bootstrap.")
+
     manager = MCPManager(load_mcp_config())
     try:
         tools = await manager.connect_all()
@@ -98,6 +103,43 @@ async def lifespan(app: FastAPI):
     app.state.mcp_tools = tools
     yield
     await manager.aclose()
+
+
+def _bootstrap_admin() -> None:
+    """Ensure a bootstrapped admin user exists when ADMIN_EMAIL / ADMIN_PASSWORD are set.
+
+    Idempotent: if the email already exists, just promote the user to admin.
+    Safe to call multiple times (e.g. from tests).
+    """
+    from app.auth.security import hash_password
+    from app.db import SessionLocal
+    from app.models import User
+
+    if not settings.admin_email or not settings.admin_password:
+        return
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == settings.admin_email.lower()).first()
+        if user:
+            if not user.is_admin:
+                user.is_admin = True
+                db.commit()
+                log.info("Admin bootstrap: promoted %s to admin.", settings.admin_email)
+            else:
+                log.info("Admin bootstrap: %s is already admin, nothing to do.", settings.admin_email)
+        else:
+            user = User(
+                email=settings.admin_email.lower(),
+                display_name="Admin",
+                password_hash=hash_password(settings.admin_password),
+                is_admin=True,
+            )
+            db.add(user)
+            db.commit()
+            log.info("Admin bootstrap: created admin user %s.", settings.admin_email)
+    finally:
+        db.close()
 
 
 app = FastAPI(title="RAG Chat API", version="0.1.0", lifespan=lifespan)
@@ -130,6 +172,7 @@ from app.sessions.artifacts import router as artifacts_router  # noqa: E402
 from app.sessions.attachments import router as attachments_router  # noqa: E402
 from app.kb.routes import router as kb_router  # noqa: E402
 from app.chat.routes import router as chat_router  # noqa: E402
+from app.admin.routes import router as admin_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
@@ -137,6 +180,7 @@ app.include_router(attachments_router, prefix="/api/sessions", tags=["attachment
 app.include_router(artifacts_router, prefix="/api/sessions", tags=["artifacts"])
 app.include_router(kb_router, prefix="/api/knowledge-base", tags=["kb"])
 app.include_router(chat_router, prefix="/api/sessions", tags=["chat"])
+app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 
 # SPA serving — opt-in; must be wired AFTER all /api routers (catch-all is last).
 _mount_spa(app)

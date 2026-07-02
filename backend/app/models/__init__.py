@@ -30,6 +30,8 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String)
     avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
     password_hash: Mapped[str] = mapped_column(String)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
