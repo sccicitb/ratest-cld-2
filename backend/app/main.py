@@ -173,6 +173,7 @@ from app.sessions.attachments import router as attachments_router  # noqa: E402
 from app.kb.routes import router as kb_router  # noqa: E402
 from app.chat.routes import router as chat_router  # noqa: E402
 from app.admin.routes import router as admin_router  # noqa: E402
+from app.admin.groups import router as admin_groups_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
@@ -181,6 +182,7 @@ app.include_router(artifacts_router, prefix="/api/sessions", tags=["artifacts"])
 app.include_router(kb_router, prefix="/api/knowledge-base", tags=["kb"])
 app.include_router(chat_router, prefix="/api/sessions", tags=["chat"])
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
+app.include_router(admin_groups_router, prefix="/api/admin", tags=["admin"])
 
 # SPA serving — opt-in; must be wired AFTER all /api routers (catch-all is last).
 _mount_spa(app)

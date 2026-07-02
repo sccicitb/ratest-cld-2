@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -22,6 +22,18 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# ---------------------------------------------------------------------------
+# M2: user↔group many-to-many association table
+# ---------------------------------------------------------------------------
+
+user_groups = Table(
+    "user_groups",
+    Base.metadata,
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("group_id", ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -33,6 +45,15 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    # M2: membership — resolved lazily; Group defined below
+    groups: Mapped[list["Group"]] = relationship(
+        "Group", secondary=user_groups, back_populates="members"
+    )
+
+    @property
+    def group_ids(self) -> list[str]:
+        return [g.id for g in self.groups]
 
 
 class RefreshToken(Base):
@@ -126,6 +147,30 @@ class KBFile(Base):
 
 
 # ---------------------------------------------------------------------------
+# M2: Group primitive (Pillar 2)
+# ---------------------------------------------------------------------------
+
+
+class Group(Base):
+    """Atomic access unit.  Members assigned via user_groups association table."""
+
+    __tablename__ = "groups"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String, unique=True, index=True)
+    default_tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    members: Mapped[list[User]] = relationship(
+        "User", secondary=user_groups, back_populates="groups"
+    )
+
+    @property
+    def member_count(self) -> int:
+        return len(self.members)
+
+
+# ---------------------------------------------------------------------------
 # v1.1 Artifacts pillar (§Stage A1): model-authored HTML report artifacts
 # ---------------------------------------------------------------------------
 
@@ -185,6 +230,8 @@ __all__ = [
     "Message",
     "Attachment",
     "KBFile",
+    "Group",
+    "user_groups",
     "Artifact",
     "ArtifactVersion",
 ]
