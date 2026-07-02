@@ -157,6 +157,9 @@ class Group(Base):
     __tablename__ = "groups"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    # Uniqueness is case-SENSITIVE (DB constraint, no normalization) —
+    # "Engineers" and "engineers" are distinct groups. Fine for admin-curated
+    # groups; if the UI ever does case-insensitive matching, normalize here.
     name: Mapped[str] = mapped_column(String, unique=True, index=True)
     default_tags: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

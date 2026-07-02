@@ -269,6 +269,29 @@ def test_delete_group_removes_membership(client, admin_headers, user_a, session_
     db.close()
 
 
+def test_delete_user_removes_membership(client, admin_headers, user_a, session_factory):
+    """Deleting a USER cascades the other way — the group loses that member,
+    and no orphan user_groups rows remain. (There's no hard-delete user API —
+    users are disabled, not deleted — so exercise the FK cascade directly.)"""
+    g = _create_group(client, admin_headers, "user-cascade-test")
+    client.put(
+        f"/api/admin/groups/{g['id']}/members",
+        json={"userIds": [user_a["id"]]},
+        headers=admin_headers,
+    )
+    # Hard-delete the user row (proves the user_groups FK cascade fires).
+    db = session_factory()
+    db.delete(db.get(User, user_a["id"]))
+    db.commit()
+    db.close()
+
+    db = session_factory()
+    grp = db.get(Group, g["id"])
+    assert grp is not None
+    assert [m.id for m in grp.members] == []  # member gone, no orphan
+    db.close()
+
+
 # ---------------------------------------------------------------------------
 # Set members (PUT) — set-semantics
 # ---------------------------------------------------------------------------
