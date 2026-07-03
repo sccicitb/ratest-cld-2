@@ -62,6 +62,21 @@ def _override_deps():
     app.dependency_overrides.pop(get_embedder_dep, None)
 
 
+@pytest.fixture(autouse=True)
+def _demo_group_for_promote(session_factory, demo_user):
+    """M3: put demo_user in a group so promote_session_file (which calls
+    _resolve_kb_filing / group_ids_for) doesn't 403 with no_group."""
+    from app.models import Group, user_groups
+
+    db = session_factory()
+    grp = Group(name="attachments-test-group", default_tags=[])
+    db.add(grp)
+    db.flush()
+    db.execute(user_groups.insert().values(user_id=demo_user["id"], group_id=grp.id))
+    db.commit()
+    db.close()
+
+
 # ---------------------------------------------------------------------------
 # auth / ownership
 # ---------------------------------------------------------------------------

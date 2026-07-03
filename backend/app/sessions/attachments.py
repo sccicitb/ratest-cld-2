@@ -251,14 +251,38 @@ def promote_session_file(
     if kb_file.scope != "session" or kb_file.session_id != session_id:
         raise ApiError(404, "not_found", "Session file not found")
 
-    # Flip scope in the DB row.
+    # A promoted doc becomes org-shared KB, so it needs a group to be visible
+    # (§8/M3). Assign the promoter's group (single → auto; multi → must have been
+    # narrowed by an admin flow — here we require exactly one); admins with no
+    # single group publish it. No-group non-admin → 403.
+    from app.groups.service import group_ids_for
+
+    my_groups = group_ids_for(user)
+    group_id: str | None = None
+    is_public = False
+    if len(my_groups) == 1:
+        group_id = my_groups[0]
+    elif user.is_admin:
+        is_public = True  # admin without a single group → make it public
+    elif not my_groups:
+        raise ApiError(403, "no_group", "Ask an admin to add you to a group first")
+    else:
+        raise ApiError(400, "group_required", "You are in multiple groups — promotion is ambiguous")
+
+    # Flip scope + group in the DB row.
     kb_file.scope = "kb"
     kb_file.session_id = None
+    kb_file.group_id = group_id
+    kb_file.is_public = is_public
     db.commit()
     db.refresh(kb_file)
 
     # Patch the denormalized Qdrant payload so search filters pick it up.
-    update_file_payload(client, file_id, {"scope": "kb", "session_id": None})
+    update_file_payload(
+        client,
+        file_id,
+        {"scope": "kb", "session_id": None, "group_id": group_id, "is_public": is_public},
+    )
 
     return kb_file
 

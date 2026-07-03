@@ -30,6 +30,8 @@ def qdrant() -> QdrantClient:
 
 
 def _make_chunks(user_id: str, session_id: str):
+    """Chunks for tool tests. KB chunks are public so they're findable with
+    caller_group_ids=[] (which is what search_kb uses when ctx.db is None)."""
     return [
         {
             "content": "Cats are small domesticated carnivorous mammals.",
@@ -40,6 +42,8 @@ def _make_chunks(user_id: str, session_id: str):
             "scope": "kb",
             "session_id": None,
             "status": "ready",
+            "group_id": None,
+            "is_public": True,
         },
         {
             "content": "The quarterly report shows a 12% increase in revenue this session.",
@@ -50,6 +54,8 @@ def _make_chunks(user_id: str, session_id: str):
             "scope": "session",
             "session_id": session_id,
             "status": "ready",
+            "group_id": None,
+            "is_public": False,
         },
     ]
 
@@ -144,6 +150,8 @@ def test_search_kb_execute_filters_by_tags(
             "scope": "kb",
             "session_id": None,
             "status": "ready",
+            "group_id": None,
+            "is_public": True,
         },
         {
             "content": "The HR team rolled out a new onboarding process.",
@@ -154,6 +162,8 @@ def test_search_kb_execute_filters_by_tags(
             "scope": "kb",
             "session_id": None,
             "status": "ready",
+            "group_id": None,
+            "is_public": True,
         },
     ]
     upsert_chunks(qdrant, embedder, chunks)

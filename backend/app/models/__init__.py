@@ -137,6 +137,11 @@ class KBFile(Base):
     session_id: Mapped[str | None] = mapped_column(
         ForeignKey("sessions.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    # M3: group gating — nullable means ungrouped (admin-only or session files)
+    group_id: Mapped[str | None] = mapped_column(
+        ForeignKey("groups.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     name: Mapped[str] = mapped_column(String)
     size: Mapped[int] = mapped_column(Integer)
     upload_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
