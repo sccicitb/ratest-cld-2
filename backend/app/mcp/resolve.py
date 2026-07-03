@@ -16,19 +16,25 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.groups.service import group_ids_for
-from app.mcp.verify import PROBE_TIMEOUT_SECONDS, _list_tools
+from app.mcp.verify import _list_tools
 from app.models import MCPServer, User, group_mcp
 from app.tools.mcp.wrapper import MCPTool
 from app.tools.registry import Tool
 
 log = logging.getLogger(__name__)
 
+# Short timeout for the per-turn list-tools handshake: this runs on EVERY chat
+# turn before the first token, so a down granted server must fail fast (not the
+# longer tool-call timeout). A user with an unreachable server stalls at most
+# this long per server.
+RESOLVE_TIMEOUT_SECONDS: float = 5.0
+
 
 async def resolve_caller_mcp_tools(
     db: Session,
     user: User,
     *,
-    timeout: float = PROBE_TIMEOUT_SECONDS,
+    timeout: float = RESOLVE_TIMEOUT_SECONDS,
 ) -> list[Tool]:
     """Return the MCP tools available to *user* for this turn.
 

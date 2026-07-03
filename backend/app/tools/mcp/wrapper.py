@@ -70,7 +70,9 @@ class MCPTool:
         try:
             async with streamablehttp_client(self._url, headers=self._headers) as (r, w, _):
                 async with ClientSession(r, w) as s:
-                    await s.initialize()
+                    # Guard the handshake too — a half-up server (TCP connects,
+                    # MCP hangs) must not freeze the SSE turn indefinitely.
+                    await asyncio.wait_for(s.initialize(), settings.mcp_tool_timeout_seconds)
                     res = await asyncio.wait_for(
                         s.call_tool(self._tool_name, args),
                         settings.mcp_tool_timeout_seconds,

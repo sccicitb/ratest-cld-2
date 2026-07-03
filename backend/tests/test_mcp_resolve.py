@@ -236,3 +236,30 @@ def test_multiple_groups_tools_merged(session_factory, monkeypatch):
     names = {t.name for t in result}
     assert "srv_a.alpha" in names
     assert "srv_b.beta" in names
+
+
+def test_server_granted_to_two_of_callers_groups_not_duplicated(session_factory, monkeypatch):
+    """One server granted via TWO of the caller's groups → its tools appear ONCE
+    (the DISTINCT in the resolve query)."""
+    db = session_factory()
+    try:
+        user = _make_user(db)
+        grp_a = _make_group(db, "A1")
+        grp_b = _make_group(db, "B1")
+        user.groups.append(grp_a)
+        user.groups.append(grp_b)
+        srv = _make_server(db, "shared_srv", enabled=True)
+        grp_a.mcp_servers.append(srv)
+        grp_b.mcp_servers.append(srv)  # same server, both groups
+        db.commit()
+
+        async def _fake_list_tools(**_):
+            return [_fake_tool("solo")]
+
+        monkeypatch.setattr(mcp_resolve_module, "_list_tools", _fake_list_tools)
+        result = _run(resolve_caller_mcp_tools(db, user))
+    finally:
+        db.close()
+
+    names = [t.name for t in result]
+    assert names == ["shared_srv.solo"]  # exactly one, not duplicated
