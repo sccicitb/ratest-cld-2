@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     # chains slow by nature. Raise further per deployment if a source is slower.
     mcp_tool_timeout_seconds: float = 120
 
+    # --- MCP catalog (§M4a): Fernet key for bearer token encryption ---
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    mcp_token_key: str | None = None
+
     # --- Code-exec sandbox (§13): service URL + per-call timeout ---
     code_exec_url: str = "http://localhost:8001"
     code_exec_timeout_seconds: float = 60

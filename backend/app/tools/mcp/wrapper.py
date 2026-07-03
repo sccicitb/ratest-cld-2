@@ -1,15 +1,20 @@
-"""MCPTool — wraps a single MCP tool as a registry-compatible Tool (§12.2, Task 7.2).
+"""MCPTool — config-based, anyio-safe single-tool adapter (§M4b.1).
 
-`name` is namespaced as `{server}.{tool}` so MCP tools never collide with
-built-in tools.  ctx is accepted to satisfy the protocol but is NOT forwarded
-to MCP calls — external tools never receive user scope.
+Carries the server's CONNECTION CONFIG + the tool's schema.  Each `execute()`
+opens a SHORT-LIVED connection just for that call and tears it down immediately
+— no session is held across the SSE generator's yields (the anyio-safety fix).
+
+`name` is namespaced as `{server_name}.{tool_name}` so MCP tools never
+collide with built-ins.  `ctx` is accepted to satisfy the protocol but is NOT
+forwarded to MCP calls — external tools never receive user scope.
 """
 from __future__ import annotations
 
+import asyncio
 import json
-from datetime import timedelta
 
-from mcp import ClientSession, McpError, types
+from mcp import ClientSession, types
+from mcp.client.streamable_http import streamablehttp_client
 
 from app.config import settings
 from app.tools.context import ToolContext  # noqa: F401  (protocol compat only)
@@ -19,46 +24,64 @@ _EMPTY_PARAMS: dict = {"type": "object", "properties": {}}
 
 
 class MCPTool:
-    """Registry-compatible adapter for a single tool exposed by an MCP server."""
+    """Registry-compatible adapter that reconnects per-call (anyio-safe)."""
 
-    def __init__(self, server_name: str, tool: types.Tool, session: ClientSession) -> None:
-        self.name = f"{server_name}.{tool.name}"
-        self._tool = tool
-        self._session = session
+    def __init__(
+        self,
+        server_name: str,
+        tool_name: str,
+        description: str,
+        input_schema: dict | None,
+        url: str,
+        transport: str,
+        headers: dict[str, str] | None,
+    ) -> None:
+        self.name = f"{server_name}.{tool_name}"
+        self._tool_name = tool_name
+        self._description = description
+        self._input_schema = input_schema
+        self._url = url
+        self._transport = transport
+        self._headers = headers
 
     def schema(self) -> dict:
         """OpenAI function-tool shape with MCP inputSchema as parameters."""
-        params = self._tool.inputSchema or _EMPTY_PARAMS
+        params = self._input_schema or _EMPTY_PARAMS
         return {
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": self._tool.description or "",
+                "description": self._description or "",
                 "parameters": params,
             },
         }
 
     async def execute(self, args: dict, ctx: ToolContext) -> str:  # noqa: ARG002
-        """Call the MCP tool and return its text output.
+        """Call the MCP tool via a short-lived connection.
 
+        Opens → initialises → calls → closes, all within this coroutine.
+        No session outlives this call (anyio-safe for SSE generators).
         ctx is deliberately unused — external MCP tools never receive user scope.
-        Raises ToolError if the MCP server signals isError.
+        Raises ToolError on isError / timeout / any connection failure.
         """
-        # Use the SDK's native per-request timeout (anyio.fail_after inside the
-        # session's own task scope) rather than asyncio.wait_for — wrapping from
-        # an outer task cancels across the anyio scope boundary (noisy warnings,
-        # and risks the long-lived shared session). On timeout the SDK raises
-        # McpError("Timed out ...").
-        try:
-            res = await self._session.call_tool(
-                self._tool.name,
-                args,
-                read_timeout_seconds=timedelta(seconds=settings.mcp_tool_timeout_seconds),
-            )
-        except McpError as exc:
-            raise ToolError(f"MCP tool {self.name!r} failed: {exc}")
+        if self._transport != "streamable-http":
+            raise ToolError(f"Unsupported transport: {self._transport!r}")
 
-        # Collect text from TextContent blocks
+        try:
+            async with streamablehttp_client(self._url, headers=self._headers) as (r, w, _):
+                async with ClientSession(r, w) as s:
+                    # Guard the handshake too — a half-up server (TCP connects,
+                    # MCP hangs) must not freeze the SSE turn indefinitely.
+                    await asyncio.wait_for(s.initialize(), settings.mcp_tool_timeout_seconds)
+                    res = await asyncio.wait_for(
+                        s.call_tool(self._tool_name, args),
+                        settings.mcp_tool_timeout_seconds,
+                    )
+        except asyncio.TimeoutError as exc:
+            raise ToolError(f"MCP tool {self.name!r} timed out") from exc
+        except Exception as exc:
+            raise ToolError(f"MCP tool {self.name!r} failed: {exc}") from exc
+
         texts = [
             block.text
             for block in (res.content or [])
