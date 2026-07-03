@@ -98,6 +98,14 @@ def _resolve_kb_filing(
     if user.is_admin:
         if group_id is not None and db.get(Group, group_id) is None:
             raise ApiError(400, "invalid_group", "Group not found")
+        # Guard the unrecoverable-invisible case: a doc with no group AND not
+        # public can never be surfaced by the scope filter, and there's no API
+        # to fix it after upload. Make the admin choose a group or public.
+        if group_id is None and not is_public:
+            raise ApiError(
+                400, "group_or_public_required",
+                "Choose a group or mark the file public",
+            )
         return group_id, is_public, tags or []
 
     my_group_ids = group_ids_for(user)
@@ -112,6 +120,8 @@ def _resolve_kb_filing(
             raise ApiError(403, "forbidden_group", "You can only file into your own groups")
         chosen = group_id
     group = db.get(Group, chosen)
+    if group is None:  # deleted between membership resolution and now
+        raise ApiError(400, "invalid_group", "Group not found")
     return chosen, False, list(group.default_tags or [])
 
 
