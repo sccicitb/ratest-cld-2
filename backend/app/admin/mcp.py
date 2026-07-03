@@ -104,6 +104,13 @@ async def patch_mcp_server(
     if body.token is not None:
         server.token_encrypted = encrypt_token(body.token)
 
+    # Keep auth_type + token consistent: bearer must end up with a token; none
+    # clears any stored ciphertext (no orphaned secrets).
+    if server.auth_type == "bearer" and not server.token_encrypted:
+        raise ApiError(400, "token_required", "token is required when authType is bearer")
+    if server.auth_type == "none":
+        server.token_encrypted = None
+
     flipping_enabled = (body.enabled is True) and not was_enabled
 
     if body.enabled is not None:

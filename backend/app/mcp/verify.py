@@ -40,6 +40,8 @@ async def probe_server(
     Returns ProbeResult(ok=False, error=<reason>) on any failure.
     Never raises.
     """
+    if transport != "streamable-http":
+        return ProbeResult(ok=False, tools=[], error=f"Unsupported transport: {transport!r}")
     try:
         async with streamablehttp_client(url, headers=headers) as (r, w, _):
             async with ClientSession(r, w) as s:

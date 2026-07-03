@@ -7,6 +7,7 @@ the frontend expects (§2). FastAPI emits response models by alias by default.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_serializer, model_validator
 from pydantic.alias_generators import to_camel
@@ -195,8 +196,8 @@ class MCPServerOut(CamelModel):
 class CreateMCPServerRequest(CamelModel):
     name: str
     url: str
-    transport: str = "streamable-http"
-    auth_type: str = "none"
+    transport: Literal["streamable-http"] = "streamable-http"
+    auth_type: Literal["none", "bearer"] = "none"
     token: str | None = None
     enabled: bool = False
 
@@ -204,8 +205,8 @@ class CreateMCPServerRequest(CamelModel):
 class UpdateMCPServerRequest(CamelModel):
     name: str | None = None
     url: str | None = None
-    transport: str | None = None
-    auth_type: str | None = None
+    transport: Literal["streamable-http"] | None = None
+    auth_type: Literal["none", "bearer"] | None = None
     token: str | None = None
     enabled: bool | None = None
 

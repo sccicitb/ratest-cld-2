@@ -315,6 +315,43 @@ def test_patch_update_token(client, admin_headers, monkeypatch):
     assert "tokenEncrypted" not in r.json()
 
 
+def test_patch_to_bearer_without_token_400(client, admin_headers):
+    """Switching a none-auth server to bearer without supplying a token is
+    rejected (no bearer server left with a null token)."""
+    created = _create_server(client, admin_headers, name="none-to-bearer").json()
+    r = client.patch(
+        f"/api/admin/mcp-servers/{created['id']}",
+        json={"authType": "bearer"},
+        headers=admin_headers,
+    )
+    assert r.status_code == 400
+    assert r.json()["code"] == "token_required"
+
+
+def test_patch_to_none_clears_token(client, admin_headers, monkeypatch, session_factory):
+    """Switching bearer→none clears any stored ciphertext (no orphaned secret)."""
+    monkeypatch.setattr("app.mcp.crypto.settings", type("S", (), {"mcp_token_key": MCP_KEY})())
+    created = _create_server(
+        client, admin_headers, name="bearer-to-none", authType="bearer", token="tok"
+    ).json()
+    r = client.patch(
+        f"/api/admin/mcp-servers/{created['id']}",
+        json={"authType": "none"},
+        headers=admin_headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["authType"] == "none"
+
+    from app.models import MCPServer
+
+    db = session_factory()
+    try:
+        srv = db.get(MCPServer, created["id"])
+        assert srv.token_encrypted is None
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # DELETE
 # ---------------------------------------------------------------------------
@@ -367,32 +404,73 @@ def test_test_endpoint_monkeypatched_fail(client, admin_headers, monkeypatch):
     assert body["error"] == "connection refused"
 
 
-def test_test_endpoint_real_in_memory_probe():
-    """One real probe via in-memory FastMCP — proves probe_server returns real tool names."""
-    from mcp.server.fastmcp import FastMCP
-    from mcp.shared.memory import create_connected_server_and_client_session as mem
+def test_probe_server_dead_port_returns_error():
+    """A real, unreachable endpoint must return ok=False and NOT raise — this is
+    the exact startup-crash scenario probe_server exists to survive."""
+    from app.mcp.verify import probe_server
 
-    fake_mcp = FastMCP("probe-test")
+    result = asyncio.run(
+        probe_server(
+            url="http://127.0.0.1:1/mcp",  # nothing listens on port 1
+            transport="streamable-http",
+            headers=None,
+            timeout=3.0,
+        )
+    )
+    assert result.ok is False
+    assert result.tools == []
+    assert result.error  # a reason string is present
 
-    @fake_mcp.tool()
-    def greet(name: str) -> str:
-        """Say hello."""
-        return f"Hello, {name}"
 
-    @fake_mcp.tool()
-    def multiply(a: int, b: int) -> int:
-        """Multiply two numbers."""
-        return a * b
+def test_probe_server_success_returns_tool_names(monkeypatch):
+    """Exercise probe_server's real control flow (wait_for → list_tools →
+    ProbeResult) against a faked transport/session so the FUNCTION is tested,
+    not bypassed."""
+    import contextlib
 
-    async def run():
-        async with mem(fake_mcp) as session:
-            await session.initialize()
-            tools_result = await session.list_tools()
-            return [t.name for t in tools_result.tools]
+    from app.mcp import verify
 
-    tool_names = asyncio.run(run())
-    assert "greet" in tool_names
-    assert "multiply" in tool_names
+    class _FakeSession:
+        def __init__(self, *_a):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        async def initialize(self):
+            return None
+
+        async def list_tools(self):
+            tools = [type("T", (), {"name": "greet"})(), type("T", (), {"name": "multiply"})()]
+            return type("R", (), {"tools": tools})()
+
+    @contextlib.asynccontextmanager
+    async def _fake_transport(url, headers=None):
+        yield (None, None, None)
+
+    monkeypatch.setattr(verify, "streamablehttp_client", _fake_transport)
+    monkeypatch.setattr(verify, "ClientSession", _FakeSession)
+
+    result = asyncio.run(
+        verify.probe_server(
+            url="http://ignored/mcp", transport="streamable-http", headers=None, timeout=5.0
+        )
+    )
+    assert result.ok is True
+    assert result.tools == ["greet", "multiply"]
+
+
+def test_probe_server_rejects_unknown_transport():
+    from app.mcp.verify import probe_server
+
+    result = asyncio.run(
+        probe_server(url="http://x/mcp", transport="stdio", headers=None, timeout=1.0)
+    )
+    assert result.ok is False
+    assert "transport" in (result.error or "").lower()
 
 
 # ---------------------------------------------------------------------------
