@@ -4,6 +4,10 @@ The route itself does no chat-loop logic: it resolves the session (owned-by
 check, same pattern as `app/sessions/routes.py`), wires a `ToolRegistry` +
 `ToolContext`, and streams whatever `run_turn` yields as SSE frames.
 
+MCP tool resolution is per-caller and async (§M4b.3): it happens INSIDE the
+async `gen()` generator before `run_turn`, so the DB session is still live and
+no MCP connection crosses a yield boundary (anyio-safe).
+
 Stage 6: inline `attachments` with `ingested=False` by extracting their text
 and prepending it to the message sent to the model.
 """
@@ -12,7 +16,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
@@ -22,6 +26,7 @@ from app.chat.client import ModelClient, get_model_client
 from app.chat.loop import run_turn
 from app.errors import ApiError
 from app.kb.routes import get_embedder_dep, get_qdrant
+from app.mcp.resolve import resolve_caller_mcp_tools
 from app.models import Attachment, ChatSession
 from app.rag.embedder import Embedder
 from app.rag.extract import extract_text
@@ -30,7 +35,7 @@ from app.tools.builtin.create_artifact import CreateArtifact
 from app.tools.builtin.execute_code import ExecuteCode
 from app.tools.builtin.search_kb import SearchKnowledgeBase
 from app.tools.context import ToolContext
-from app.tools.registry import Tool, ToolRegistry
+from app.tools.registry import ToolRegistry
 
 router = APIRouter()
 
@@ -52,18 +57,12 @@ def _owned(db: DbSession, user_id: str, session_id: str) -> ChatSession:
     return s
 
 
-def get_mcp_tools(request: Request) -> list[Tool]:
-    """Return MCP tools stashed on app.state by the lifespan — empty list if none."""
-    return getattr(request.app.state, "mcp_tools", [])
-
-
-def _build_registry(mcp_tools: list[Tool]) -> ToolRegistry:
+def _build_registry() -> ToolRegistry:
+    """Build a registry with the three built-in tools pre-registered."""
     registry = ToolRegistry()
     registry.register(SearchKnowledgeBase())
     registry.register(ExecuteCode())
     registry.register(CreateArtifact())
-    for t in mcp_tools:
-        registry.register(t)
     return registry
 
 
@@ -76,7 +75,6 @@ def chat(
     client: QdrantDep,
     embedder: EmbedderDep,
     model: ModelClientDep,
-    mcp_tools: Annotated[list[Tool], Depends(get_mcp_tools)],
 ) -> StreamingResponse:
     session = _owned(db, user.id, session_id)
 
@@ -106,7 +104,6 @@ def chat(
         if inline_blocks:
             model_content = "\n\n---\n\n".join(inline_blocks) + f"\n\n---\n\n{body.message}"
 
-    registry = _build_registry(mcp_tools)
     ctx = ToolContext(
         user_id=user.id,
         session_id=session_id,
@@ -116,6 +113,13 @@ def chat(
     )
 
     async def gen():
+        # Resolve per-caller MCP tools async INSIDE gen() — the DB session is
+        # alive here and no MCP connection crosses a yield boundary.
+        mcp_tools = await resolve_caller_mcp_tools(db, user)
+        registry = _build_registry()
+        for t in mcp_tools:
+            registry.register(t)
+
         async for event in run_turn(
             db=db,
             session=session,

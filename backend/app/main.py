@@ -18,8 +18,6 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.mcp.config import load_mcp_config
-from app.mcp.manager import MCPManager
 
 log = logging.getLogger(__name__)
 
@@ -93,16 +91,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.exception("Admin bootstrap failed — continuing without bootstrap.")
 
-    manager = MCPManager(load_mcp_config())
-    try:
-        tools = await manager.connect_all()
-    except Exception:
-        log.exception("MCP connect_all failed at startup — continuing with no MCP tools.")
-        tools = []
-    app.state.mcp_manager = manager
-    app.state.mcp_tools = tools
     yield
-    await manager.aclose()
 
 
 def _bootstrap_admin() -> None:
