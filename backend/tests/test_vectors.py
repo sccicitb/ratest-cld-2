@@ -2,6 +2,12 @@
 
 Embedder model load takes ~10-30s, so it's loaded once via a module-scoped
 fixture for the whole file.
+
+M3 (Pillar 2 v1.1): KB access is now group/public-gated, not user-gated.
+  - KB chunks need group_id + is_public fields.
+  - search() requires caller_group_ids kwarg.
+  - "different user can't see KB" → reframed as "caller not in the group
+    (caller_group_ids=[]) can't see group-gated KB chunks".
 """
 from __future__ import annotations
 
@@ -68,8 +74,11 @@ def test_ensure_collection_is_idempotent_and_has_named_vectors(qdrant: QdrantCli
 
 # --- Task 2.3 — Upsert + scoped search round-trip ---------------------------
 
+_GROUP_A = "group-a"
+
 
 def _make_chunks(user_id: str, session_id: str):
+    """Chunks for round-trip tests. KB chunks belong to group-a (M3)."""
     return [
         {
             "content": "Cats are small domesticated carnivorous mammals.",
@@ -80,6 +89,8 @@ def _make_chunks(user_id: str, session_id: str):
             "scope": "kb",
             "session_id": None,
             "status": "ready",
+            "group_id": _GROUP_A,
+            "is_public": False,
         },
         {
             "content": "Dogs are loyal companions and have been domesticated for millennia.",
@@ -90,6 +101,8 @@ def _make_chunks(user_id: str, session_id: str):
             "scope": "kb",
             "session_id": None,
             "status": "ready",
+            "group_id": _GROUP_A,
+            "is_public": False,
         },
         {
             "content": "The quarterly report shows a 12% increase in revenue this session.",
@@ -100,6 +113,8 @@ def _make_chunks(user_id: str, session_id: str):
             "scope": "session",
             "session_id": session_id,
             "status": "ready",
+            "group_id": None,
+            "is_public": False,
         },
     ]
 
@@ -111,8 +126,10 @@ def test_upsert_and_scoped_search_round_trip(qdrant: QdrantClient, embedder: Emb
     chunks = _make_chunks(user_id, session_id)
     upsert_chunks(qdrant, embedder, chunks)
 
-    results = search(qdrant, embedder, query="quarterly revenue report", user_id=user_id,
-                      session_id=session_id, k=5)
+    results = search(
+        qdrant, embedder, query="quarterly revenue report", user_id=user_id,
+        session_id=session_id, caller_group_ids=[_GROUP_A], k=5,
+    )
     file_ids = {r["file_id"] for r in results}
     assert "file-session-1" in file_ids
     assert "file-kb-1" in file_ids or "file-kb-2" in file_ids
@@ -127,21 +144,34 @@ def test_search_excludes_session_chunk_for_different_session(
     chunks = _make_chunks(user_id, session_id)
     upsert_chunks(qdrant, embedder, chunks)
 
-    results = search(qdrant, embedder, query="quarterly revenue report", user_id=user_id,
-                      session_id="other-session", k=5)
+    results = search(
+        qdrant, embedder, query="quarterly revenue report", user_id=user_id,
+        session_id="other-session", caller_group_ids=[_GROUP_A], k=5,
+    )
     file_ids = {r["file_id"] for r in results}
     assert "file-session-1" not in file_ids
 
 
-def test_search_returns_nothing_for_different_user(qdrant: QdrantClient, embedder: Embedder):
+def test_search_returns_nothing_for_caller_outside_group(
+    qdrant: QdrantClient, embedder: Embedder
+):
+    """M3 group-gating: a caller in no groups cannot see group-gated KB chunks.
+
+    The KB chunks belong to group-a (is_public=False). A caller with
+    caller_group_ids=[] has no group membership, so neither branch of the
+    scope filter matches — results must be empty.
+    """
     ensure_collection(qdrant)
     user_id = "user-1"
     session_id = "session-1"
     chunks = _make_chunks(user_id, session_id)
     upsert_chunks(qdrant, embedder, chunks)
 
-    results = search(qdrant, embedder, query="quarterly revenue report cats dogs",
-                      user_id="other-user", session_id=session_id, k=5)
+    # Caller has no group membership AND is a different user (no session ownership)
+    results = search(
+        qdrant, embedder, query="quarterly revenue report cats dogs",
+        user_id="other-user", session_id="other-session", caller_group_ids=[], k=5,
+    )
     assert results == []
 
 
@@ -156,11 +186,13 @@ def test_search_with_session_id_none_returns_kb_chunks_only(
     upsert_chunks(qdrant, embedder, chunks)
 
     # Query with session_id=None; should get KB chunks but NOT session chunk
-    results = search(qdrant, embedder, query="cats domesticated mammals",
-                      user_id=user_id, session_id=None, k=5)
+    results = search(
+        qdrant, embedder, query="cats domesticated mammals",
+        user_id=user_id, session_id=None, caller_group_ids=[_GROUP_A], k=5,
+    )
     file_ids = {r["file_id"] for r in results}
 
-    # KB chunks should be returned
+    # KB chunks should be returned (caller is in group-a)
     assert "file-kb-1" in file_ids or "file-kb-2" in file_ids
     # Session chunk must NOT be returned (the security fix: no empty-string match leak)
     assert "file-session-1" not in file_ids
@@ -178,8 +210,10 @@ def test_delete_by_file_removes_points(qdrant: QdrantClient, embedder: Embedder)
 
     delete_by_file(qdrant, "file-kb-1")
 
-    results = search(qdrant, embedder, query="cats domesticated mammals", user_id=user_id,
-                      session_id=session_id, k=5)
+    results = search(
+        qdrant, embedder, query="cats domesticated mammals", user_id=user_id,
+        session_id=session_id, caller_group_ids=[_GROUP_A], k=5,
+    )
     file_ids = {r["file_id"] for r in results}
     assert "file-kb-1" not in file_ids
 
@@ -193,8 +227,10 @@ def test_delete_by_session_removes_points(qdrant: QdrantClient, embedder: Embedd
 
     delete_by_session(qdrant, session_id)
 
-    results = search(qdrant, embedder, query="quarterly revenue report", user_id=user_id,
-                      session_id=session_id, k=5)
+    results = search(
+        qdrant, embedder, query="quarterly revenue report", user_id=user_id,
+        session_id=session_id, caller_group_ids=[_GROUP_A], k=5,
+    )
     file_ids = {r["file_id"] for r in results}
     assert "file-session-1" not in file_ids
 
@@ -212,6 +248,8 @@ def test_search_with_tags_filters_to_matching_chunks(qdrant: QdrantClient, embed
             "scope": "kb",
             "session_id": None,
             "status": "ready",
+            "group_id": _GROUP_A,
+            "is_public": False,
         },
         {
             "content": "The HR team rolled out a new onboarding process.",
@@ -222,16 +260,22 @@ def test_search_with_tags_filters_to_matching_chunks(qdrant: QdrantClient, embed
             "scope": "kb",
             "session_id": None,
             "status": "ready",
+            "group_id": _GROUP_A,
+            "is_public": False,
         },
     ]
     upsert_chunks(qdrant, embedder, chunks)
 
-    tagged = search(qdrant, embedder, query="team process margins", user_id=user_id,
-                     session_id=None, k=5, tags=["finance"])
+    tagged = search(
+        qdrant, embedder, query="team process margins", user_id=user_id,
+        session_id=None, caller_group_ids=[_GROUP_A], k=5, tags=["finance"],
+    )
     assert {r["file_id"] for r in tagged} == {"file-finance"}
 
-    untagged = search(qdrant, embedder, query="team process margins", user_id=user_id,
-                       session_id=None, k=5, tags=None)
+    untagged = search(
+        qdrant, embedder, query="team process margins", user_id=user_id,
+        session_id=None, caller_group_ids=[_GROUP_A], k=5, tags=None,
+    )
     assert {r["file_id"] for r in untagged} == {"file-finance", "file-hr"}
 
 
@@ -244,14 +288,22 @@ def test_update_file_payload_promotes_session_chunk_to_kb(
     chunks = _make_chunks(user_id, session_id)
     upsert_chunks(qdrant, embedder, chunks)
 
-    # Before promotion: a different session shouldn't see file-session-1.
-    results = search(qdrant, embedder, query="quarterly revenue report", user_id=user_id,
-                      session_id="other-session", k=5)
+    # Before promotion: a different session (or no session) shouldn't see file-session-1.
+    results = search(
+        qdrant, embedder, query="quarterly revenue report", user_id=user_id,
+        session_id="other-session", caller_group_ids=[_GROUP_A], k=5,
+    )
     assert "file-session-1" not in {r["file_id"] for r in results}
 
-    update_file_payload(qdrant, "file-session-1", {"scope": "kb", "session_id": None})
+    # Promote to public KB doc (set is_public=True so any caller can see it).
+    update_file_payload(
+        qdrant, "file-session-1",
+        {"scope": "kb", "session_id": None, "is_public": True},
+    )
 
-    # After promotion: now visible regardless of session_id (scope=kb).
-    results = search(qdrant, embedder, query="quarterly revenue report", user_id=user_id,
-                      session_id="other-session", k=5)
+    # After promotion: visible regardless of session_id or group membership.
+    results = search(
+        qdrant, embedder, query="quarterly revenue report", user_id=user_id,
+        session_id="other-session", caller_group_ids=[], k=5,
+    )
     assert "file-session-1" in {r["file_id"] for r in results}

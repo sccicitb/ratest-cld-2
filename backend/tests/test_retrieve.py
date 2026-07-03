@@ -4,6 +4,10 @@ Embedder model load takes ~10-30s, so it's loaded once via a module-scoped
 fixture (same pattern as tests/test_vectors.py). Rerank ordering is tested
 with a monkeypatched fake reranker — the real bge-reranker-v2-m3 weights
 (~2.3GB) are never loaded in tests.
+
+M3 (Pillar 2 v1.1): retrieve() now requires caller_group_ids kwarg. KB access
+is group/public-gated — not per-user. "cross_user" isolation test is reframed
+as "caller outside all groups cannot see group-gated KB chunks".
 """
 from __future__ import annotations
 
@@ -26,7 +30,11 @@ def qdrant() -> QdrantClient:
     return QdrantClient(":memory:")
 
 
+_GROUP_A = "group-a"
+
+
 def _make_chunks(user_id: str, session_id: str):
+    """KB chunks belong to group-a (M3 group-gated). Session chunk is private."""
     return [
         {
             "content": "Cats are small domesticated carnivorous mammals.",
@@ -37,6 +45,8 @@ def _make_chunks(user_id: str, session_id: str):
             "scope": "kb",
             "session_id": None,
             "status": "ready",
+            "group_id": _GROUP_A,
+            "is_public": False,
         },
         {
             "content": "The quarterly report shows a 12% increase in revenue this session.",
@@ -47,6 +57,8 @@ def _make_chunks(user_id: str, session_id: str):
             "scope": "session",
             "session_id": session_id,
             "status": "ready",
+            "group_id": None,
+            "is_public": False,
         },
     ]
 
@@ -64,6 +76,7 @@ def test_retrieve_returns_scoped_chunks(qdrant: QdrantClient, embedder: Embedder
         query="quarterly revenue report",
         user_id=user_id,
         session_id=session_id,
+        caller_group_ids=[_GROUP_A],
         client=qdrant,
         embedder=embedder,
         k=5,
@@ -93,6 +106,7 @@ def test_retrieve_recall_only_when_rerank_disabled(
         query="cats domesticated mammals",
         user_id=user_id,
         session_id=session_id,
+        caller_group_ids=[_GROUP_A],
         client=qdrant,
         embedder=embedder,
         k=5,
@@ -110,6 +124,7 @@ def test_retrieve_cross_session_isolation(qdrant: QdrantClient, embedder: Embedd
         query="quarterly revenue report",
         user_id=user_id,
         session_id="other-session",
+        caller_group_ids=[_GROUP_A],
         client=qdrant,
         embedder=embedder,
         k=5,
@@ -117,7 +132,14 @@ def test_retrieve_cross_session_isolation(qdrant: QdrantClient, embedder: Embedd
     assert "file-session-1" not in {r["file_id"] for r in results}
 
 
-def test_retrieve_cross_user_isolation(qdrant: QdrantClient, embedder: Embedder, monkeypatch):
+def test_retrieve_caller_outside_group_sees_nothing(
+    qdrant: QdrantClient, embedder: Embedder, monkeypatch
+):
+    """M3 group-gating: a caller in no group (caller_group_ids=[]) sees nothing.
+
+    KB chunks belong to group-a (is_public=False). A caller with no groups
+    cannot access them, and a mismatched user_id means no session chunks either.
+    """
     monkeypatch.setattr("app.rag.retrieve.settings.rerank_enabled", False)
     ensure_collection(qdrant)
     user_id, session_id = "user-1", "session-1"
@@ -127,6 +149,7 @@ def test_retrieve_cross_user_isolation(qdrant: QdrantClient, embedder: Embedder,
         query="quarterly revenue report cats",
         user_id="other-user",
         session_id=session_id,
+        caller_group_ids=[],  # no group membership → KB chunks invisible
         client=qdrant,
         embedder=embedder,
         k=5,
@@ -142,7 +165,9 @@ def test_retrieve_uses_wider_recall_when_rerank_enabled(
 
     captured_k = {}
 
-    def _fake_search(client, embedder, *, query, user_id, session_id, k=5, tags=None):
+    def _fake_search(
+        client, embedder, *, query, user_id, session_id, caller_group_ids, k=5, tags=None
+    ):
         captured_k["k"] = k
         return [
             {
@@ -154,6 +179,8 @@ def test_retrieve_uses_wider_recall_when_rerank_enabled(
                 "scope": "kb",
                 "session_id": None,
                 "status": "ready",
+                "group_id": None,
+                "is_public": True,
             }
         ]
 
@@ -164,7 +191,8 @@ def test_retrieve_uses_wider_recall_when_rerank_enabled(
     monkeypatch.setattr("app.rag.retrieve.rerank", _fake_rerank)
 
     out = retrieve(
-        query="x", user_id="u", session_id=None, client=qdrant, embedder=embedder, k=3
+        query="x", user_id="u", session_id=None, caller_group_ids=[], client=qdrant,
+        embedder=embedder, k=3,
     )
     assert captured_k["k"] == 30  # k * multiplier
     assert len(out) == 1
@@ -186,6 +214,8 @@ def test_retrieve_with_tags_filters_to_matching_chunks(
             "scope": "kb",
             "session_id": None,
             "status": "ready",
+            "group_id": _GROUP_A,
+            "is_public": False,
         },
         {
             "content": "The HR team rolled out a new onboarding process.",
@@ -196,6 +226,8 @@ def test_retrieve_with_tags_filters_to_matching_chunks(
             "scope": "kb",
             "session_id": None,
             "status": "ready",
+            "group_id": _GROUP_A,
+            "is_public": False,
         },
     ]
     upsert_chunks(qdrant, embedder, chunks)
@@ -204,6 +236,7 @@ def test_retrieve_with_tags_filters_to_matching_chunks(
         query="team process margins",
         user_id=user_id,
         session_id=None,
+        caller_group_ids=[_GROUP_A],
         client=qdrant,
         embedder=embedder,
         k=5,
@@ -215,6 +248,7 @@ def test_retrieve_with_tags_filters_to_matching_chunks(
         query="team process margins",
         user_id=user_id,
         session_id=None,
+        caller_group_ids=[_GROUP_A],
         client=qdrant,
         embedder=embedder,
         k=5,
@@ -245,6 +279,8 @@ def test_rerank_reorders_by_fake_score_desc_and_truncates(monkeypatch):
             "scope": "kb",
             "session_id": None,
             "status": "ready",
+            "group_id": None,
+            "is_public": True,
         }
         for i in range(3)
     ]

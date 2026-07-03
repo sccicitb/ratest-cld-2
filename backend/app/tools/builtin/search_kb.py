@@ -48,8 +48,13 @@ class SearchKnowledgeBase:
         tags = args.get("tags")
         # Resolve the caller's groups server-side (never from model args) — the
         # KB access filter is `is_public OR group_id ∈ caller_group_ids` (§8/M3).
-        user = ctx.db.get(User, ctx.user_id)
-        caller_group_ids = group_ids_for(user) if user is not None else []
+        # ctx.db may be None in lightweight contexts (tests, streaming tasks that
+        # have no DB session); treat that as no-group (public-only KB access).
+        if ctx.db is not None:
+            user = ctx.db.get(User, ctx.user_id)
+            caller_group_ids = group_ids_for(user) if user is not None else []
+        else:
+            caller_group_ids = []
         chunks = retrieve(
             query=query,
             user_id=ctx.user_id,

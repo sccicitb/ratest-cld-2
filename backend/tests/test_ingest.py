@@ -57,7 +57,14 @@ def _make_user(db) -> User:
     return user
 
 
-def _make_kb_file(db, user_id: str, storage_key: str, name: str) -> KBFile:
+def _make_kb_file(
+    db,
+    user_id: str,
+    storage_key: str,
+    name: str,
+    *,
+    is_public: bool = False,
+) -> KBFile:
     file = KBFile(
         user_id=user_id,
         scope="kb",
@@ -68,6 +75,8 @@ def _make_kb_file(db, user_id: str, storage_key: str, name: str) -> KBFile:
         status="indexing",
         chunk_count=0,
         tags=["alpha"],
+        is_public=is_public,
+        group_id=None,
     )
     db.add(file)
     db.commit()
@@ -96,7 +105,8 @@ def test_ingest_real_pipeline_extracts_chunks_embeds_and_marks_ready(
     assert settings.blob_dir == str(tmp_path)
 
     user = _make_user(db_session)
-    file = _make_kb_file(db_session, user.id, storage_key, "doc.txt")
+    # is_public=True so chunks are visible without group membership (M3)
+    file = _make_kb_file(db_session, user.id, storage_key, "doc.txt", is_public=True)
 
     events = asyncio.run(
         _collect(ingest(db_session, file.id, client=qdrant, embedder=embedder))
@@ -114,7 +124,7 @@ def test_ingest_real_pipeline_extracts_chunks_embeds_and_marks_ready(
 
     results = search(
         qdrant, embedder, query="domesticated carnivorous mammals", user_id=user.id,
-        session_id=None, k=5,
+        session_id=None, caller_group_ids=[], k=5,
     )
     assert any(r["file_id"] == file.id for r in results)
 

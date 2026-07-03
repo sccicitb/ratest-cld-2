@@ -2,6 +2,11 @@
 
 Routes use a fake embedder + an in-memory Qdrant client (overridden via
 get_qdrant/get_embedder_dep) so these stay fast — no BGE-M3 model load.
+
+M3 (Pillar 2 v1.1): uploads require the caller to be in a group (or be admin).
+The ``_demo_group`` autouse fixture creates a Group and adds the demo user to it
+so all upload tests work. Tests that explicitly verify the no-group-403 path use
+a fresh user with no group membership.
 """
 from __future__ import annotations
 
@@ -16,6 +21,7 @@ from qdrant_client import models as qm
 from app.db import get_session_factory
 from app.kb.routes import get_embedder_dep, get_qdrant
 from app.main import app
+from app.models import Group, user_groups
 from app.rag.vectors import COLLECTION, ensure_collection
 
 
@@ -46,6 +52,29 @@ def _override_kb_deps(qdrant_memory, session_factory):
     app.dependency_overrides.pop(get_qdrant, None)
     app.dependency_overrides.pop(get_embedder_dep, None)
     app.dependency_overrides.pop(get_session_factory, None)
+
+
+@pytest.fixture()
+def demo_group(session_factory, demo_user) -> str:
+    """M3: create a Group and add demo_user to it. Returns the group id.
+
+    Exposed as a named fixture so tests that need the group_id can request it.
+    The ``_demo_group_autouse`` fixture below wires it in for every test.
+    """
+    db = session_factory()
+    grp = Group(name="default-group", default_tags=["kb-tag"])
+    db.add(grp)
+    db.flush()
+    db.execute(user_groups.insert().values(user_id=demo_user["id"], group_id=grp.id))
+    db.commit()
+    gid = grp.id
+    db.close()
+    return gid
+
+
+@pytest.fixture(autouse=True)
+def _demo_group_autouse(demo_group):
+    """Ensure every test in this file has the demo user in a group (M3 upload rule)."""
 
 
 def _parse_sse_events(raw: bytes) -> list[dict]:
