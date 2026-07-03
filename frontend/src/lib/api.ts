@@ -6,6 +6,20 @@
  */
 import type { AuthResponse, LoginCredentials, User } from "@/types/api";
 import type {
+  AdminUser,
+  ChangePasswordPayload,
+  CreateGroupPayload,
+  CreateMcpServerPayload,
+  CreateUserPayload,
+  Group,
+  GroupDetail,
+  MCPServer,
+  PatchGroupPayload,
+  PatchMcpServerPayload,
+  PatchUserPayload,
+  TestMcpResult,
+} from "@/types/admin";
+import type {
   ArtifactSummary,
   Attachment,
   Message,
@@ -240,3 +254,111 @@ export async function fetchArtifactHtml(
   );
   return res.text();
 }
+
+/* ------------------------------------------------------------------ */
+/*  Admin — Users                                                      */
+/* ------------------------------------------------------------------ */
+
+export const adminListUsers = (): Promise<AdminUser[]> =>
+  req("/api/admin/users", { headers: authHeaders() }).then((r) => r.json());
+
+export const adminCreateUser = (data: CreateUserPayload): Promise<AdminUser> =>
+  req("/api/admin/users", {
+    method: "POST",
+    body: JSON.stringify(data),
+    headers: { ...JSON_H, ...authHeaders() },
+  }).then((r) => r.json());
+
+export const adminPatchUser = (id: string, data: PatchUserPayload): Promise<AdminUser> =>
+  req(`/api/admin/users/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+    headers: { ...JSON_H, ...authHeaders() },
+  }).then((r) => r.json());
+
+export const adminResetPassword = (id: string): Promise<{ tempPassword: string }> =>
+  req(`/api/admin/users/${id}/reset-password`, {
+    method: "POST",
+    headers: authHeaders(),
+  }).then((r) => r.json());
+
+/* ------------------------------------------------------------------ */
+/*  Admin — Groups                                                     */
+/* ------------------------------------------------------------------ */
+
+export const adminListGroups = (): Promise<Group[]> =>
+  req("/api/admin/groups", { headers: authHeaders() }).then((r) => r.json());
+
+export const adminGetGroup = (id: string): Promise<GroupDetail> =>
+  req(`/api/admin/groups/${id}`, { headers: authHeaders() }).then((r) => r.json());
+
+export const adminCreateGroup = (data: CreateGroupPayload): Promise<Group> =>
+  req("/api/admin/groups", {
+    method: "POST",
+    body: JSON.stringify(data),
+    headers: { ...JSON_H, ...authHeaders() },
+  }).then((r) => r.json());
+
+export const adminPatchGroup = (id: string, data: PatchGroupPayload): Promise<Group> =>
+  req(`/api/admin/groups/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+    headers: { ...JSON_H, ...authHeaders() },
+  }).then((r) => r.json());
+
+export const adminDeleteGroup = (id: string): Promise<void> =>
+  req(`/api/admin/groups/${id}`, { method: "DELETE", headers: authHeaders() }).then(() => {});
+
+export const adminSetGroupMembers = (id: string, userIds: string[]): Promise<GroupDetail> =>
+  req(`/api/admin/groups/${id}/members`, {
+    method: "PUT",
+    body: JSON.stringify({ userIds }),
+    headers: { ...JSON_H, ...authHeaders() },
+  }).then((r) => r.json());
+
+export const adminSetGroupServers = (id: string, serverIds: string[]): Promise<GroupDetail> =>
+  req(`/api/admin/groups/${id}/mcp-servers`, {
+    method: "PUT",
+    body: JSON.stringify({ serverIds }),
+    headers: { ...JSON_H, ...authHeaders() },
+  }).then((r) => r.json());
+
+/* ------------------------------------------------------------------ */
+/*  Admin — MCP Servers                                                */
+/* ------------------------------------------------------------------ */
+
+export const adminListMcpServers = (): Promise<MCPServer[]> =>
+  req("/api/admin/mcp-servers", { headers: authHeaders() }).then((r) => r.json());
+
+export const adminCreateMcpServer = (data: CreateMcpServerPayload): Promise<MCPServer> =>
+  req("/api/admin/mcp-servers", {
+    method: "POST",
+    body: JSON.stringify(data),
+    headers: { ...JSON_H, ...authHeaders() },
+  }).then((r) => r.json());
+
+export const adminPatchMcpServer = (id: string, data: PatchMcpServerPayload): Promise<MCPServer> =>
+  req(`/api/admin/mcp-servers/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+    headers: { ...JSON_H, ...authHeaders() },
+  }).then((r) => r.json());
+
+export const adminDeleteMcpServer = (id: string): Promise<void> =>
+  req(`/api/admin/mcp-servers/${id}`, { method: "DELETE", headers: authHeaders() }).then(() => {});
+
+export const adminTestMcpServer = (id: string): Promise<TestMcpResult> =>
+  req(`/api/admin/mcp-servers/${id}/test`, { method: "POST", headers: authHeaders() }).then((r) =>
+    r.json(),
+  );
+
+/* ------------------------------------------------------------------ */
+/*  Self — change password                                             */
+/* ------------------------------------------------------------------ */
+
+export const changePassword = (data: ChangePasswordPayload): Promise<void> =>
+  req("/api/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify(data),
+    headers: { ...JSON_H, ...authHeaders() },
+  }).then(() => {});
