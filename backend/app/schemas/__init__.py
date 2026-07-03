@@ -92,6 +92,9 @@ class KnowledgeBaseFileOut(CamelModel):
     status: str
     tags: list[str] = []
     scope: str = "kb"
+    # M3: group gating
+    group_id: str | None = None
+    is_public: bool = False
 
 
 # --- Artifacts (§v1.1 Stage A1) ---

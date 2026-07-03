@@ -1,22 +1,33 @@
 """KB file repo (§8.2, §8.3): list/filter, create, ownership lookup, mutate."""
 from __future__ import annotations
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError
 from app.models import KBFile
 
 
-def list_kb(
+def list_accessible(
     db: Session,
-    user_id: str,
     *,
+    caller_group_ids: list[str],
+    is_admin: bool,
     search: str | None = None,
     status: str | None = None,
     tag: str | None = None,
 ) -> list[KBFile]:
-    """List a user's KB-scope files, newest first, with AND-combined filters."""
-    query = db.query(KBFile).filter(KBFile.user_id == user_id, KBFile.scope == "kb")
+    """List KB-scope files the caller may see, newest first (§8/M3).
+
+    Admin sees all KB files. A regular user sees `is_public OR group_id ∈ their
+    groups`. Session files never appear on the KB page.
+    """
+    query = db.query(KBFile).filter(KBFile.scope == "kb")
+    if not is_admin:
+        conds = [KBFile.is_public.is_(True)]
+        if caller_group_ids:
+            conds.append(KBFile.group_id.in_(caller_group_ids))
+        query = query.filter(or_(*conds))
     if search:
         query = query.filter(KBFile.name.ilike(f"%{search}%"))
     if status:
@@ -37,6 +48,8 @@ def create(
     scope: str = "kb",
     session_id: str | None = None,
     tags: list[str] | None = None,
+    group_id: str | None = None,
+    is_public: bool = False,
 ) -> KBFile:
     file = KBFile(
         user_id=user_id,
@@ -48,6 +61,8 @@ def create(
         status="indexing",
         chunk_count=0,
         tags=tags or [],
+        group_id=group_id,
+        is_public=is_public,
     )
     db.add(file)
     db.commit()
@@ -58,6 +73,14 @@ def create(
 def get_owned(db: Session, user_id: str, file_id: str) -> KBFile:
     file = db.get(KBFile, file_id)
     if not file or file.user_id != user_id:
+        raise ApiError(404, "not_found", "File not found")
+    return file
+
+
+def get_manageable(db: Session, *, user_id: str, is_admin: bool, file_id: str) -> KBFile:
+    """A file the caller may delete/reindex/retag: their own upload, or ANY if admin."""
+    file = db.get(KBFile, file_id)
+    if not file or (not is_admin and file.user_id != user_id):
         raise ApiError(404, "not_found", "File not found")
     return file
 

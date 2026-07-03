@@ -72,6 +72,9 @@ async def ingest(
                 "scope": file.scope,
                 "session_id": file.session_id,
                 "status": "ready",
+                # M3: denormalize group gating onto each chunk
+                "group_id": file.group_id,
+                "is_public": file.is_public,
             }
             for idx, piece in enumerate(pieces)
         ]

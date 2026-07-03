@@ -7,6 +7,8 @@ scope parameter, so the model has no surface to even attempt it.
 """
 from __future__ import annotations
 
+from app.groups.service import group_ids_for
+from app.models import User
 from app.rag.retrieve import retrieve
 from app.tools.context import ToolContext
 
@@ -44,10 +46,15 @@ class SearchKnowledgeBase:
     async def execute(self, args: dict, ctx: ToolContext) -> str:
         query = args["query"]
         tags = args.get("tags")
+        # Resolve the caller's groups server-side (never from model args) — the
+        # KB access filter is `is_public OR group_id ∈ caller_group_ids` (§8/M3).
+        user = ctx.db.get(User, ctx.user_id)
+        caller_group_ids = group_ids_for(user) if user is not None else []
         chunks = retrieve(
             query=query,
             user_id=ctx.user_id,
             session_id=ctx.session_id,
+            caller_group_ids=caller_group_ids,
             client=ctx.client,
             embedder=ctx.embedder,
             k=DEFAULT_K,
