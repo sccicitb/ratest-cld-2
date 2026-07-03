@@ -33,6 +33,44 @@ user_groups = Table(
     Column("group_id", ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True),
 )
 
+# ---------------------------------------------------------------------------
+# M4a: MCP server catalog + group grants
+# ---------------------------------------------------------------------------
+
+group_mcp = Table(
+    "group_mcp",
+    Base.metadata,
+    Column(
+        "group_id",
+        ForeignKey("groups.id", name="fk_group_mcp_group_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "mcp_server_id",
+        ForeignKey("mcp_servers.id", name="fk_group_mcp_mcp_server_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
+
+
+class MCPServer(Base):
+    """Catalog entry for an external MCP server (§M4a)."""
+
+    __tablename__ = "mcp_servers"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String, unique=True, index=True)
+    transport: Mapped[str] = mapped_column(String, default="streamable-http")
+    url: Mapped[str] = mapped_column(String)
+    auth_type: Mapped[str] = mapped_column(String, default="none")  # none | bearer
+    token_encrypted: Mapped[str | None] = mapped_column(String, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    groups: Mapped[list["Group"]] = relationship(
+        "Group", secondary=group_mcp, back_populates="mcp_servers"
+    )
+
 
 class User(Base):
     __tablename__ = "users"
@@ -173,6 +211,10 @@ class Group(Base):
         "User", secondary=user_groups, back_populates="groups"
     )
 
+    mcp_servers: Mapped[list["MCPServer"]] = relationship(
+        "MCPServer", secondary=group_mcp, back_populates="groups"
+    )
+
     @property
     def member_count(self) -> int:
         return len(self.members)
@@ -242,4 +284,6 @@ __all__ = [
     "user_groups",
     "Artifact",
     "ArtifactVersion",
+    "MCPServer",
+    "group_mcp",
 ]
