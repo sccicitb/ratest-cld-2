@@ -5,13 +5,16 @@ so the anyio task-group / cancel-scope stays in this task. It never raises —
 a down/unauthorized/timeout server returns ProbeResult(ok=False, ...).
 
 probe_config() is the convenience wrapper used by admin endpoints.
+
+_list_tools() is the shared raw connect+list helper used by both probe_server
+and resolve_caller_mcp_tools (M4b) so the resilient pattern lives in one place.
 """
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
 
-from mcp import ClientSession
+from mcp import ClientSession, types
 from mcp.client.streamable_http import streamablehttp_client
 
 from app.models import MCPServer
@@ -27,6 +30,27 @@ class ProbeResult:
     error: str | None = None
 
 
+async def _list_tools(
+    *,
+    url: str,
+    transport: str,
+    headers: dict[str, str] | None,
+    timeout: float,
+) -> list[types.Tool]:
+    """Connect, initialize, and list tools — returns the tool list or raises.
+
+    Callers are responsible for catching exceptions (probe_server wraps in
+    try/except; resolve_caller_mcp_tools does per-server try/except).
+    """
+    if transport != "streamable-http":
+        raise ValueError(f"Unsupported transport: {transport!r}")
+    async with streamablehttp_client(url, headers=headers) as (r, w, _):
+        async with ClientSession(r, w) as s:
+            await asyncio.wait_for(s.initialize(), timeout)
+            result = await asyncio.wait_for(s.list_tools(), timeout)
+    return result.tools
+
+
 async def probe_server(
     *,
     url: str,
@@ -40,15 +64,10 @@ async def probe_server(
     Returns ProbeResult(ok=False, error=<reason>) on any failure.
     Never raises.
     """
-    if transport != "streamable-http":
-        return ProbeResult(ok=False, tools=[], error=f"Unsupported transport: {transport!r}")
     try:
-        async with streamablehttp_client(url, headers=headers) as (r, w, _):
-            async with ClientSession(r, w) as s:
-                await asyncio.wait_for(s.initialize(), timeout)
-                result = await asyncio.wait_for(s.list_tools(), timeout)
-        return ProbeResult(ok=True, tools=[t.name for t in result.tools], error=None)
-    except Exception as exc:  # ConnectError / McpError / TimeoutError / anything
+        tools = await _list_tools(url=url, transport=transport, headers=headers, timeout=timeout)
+        return ProbeResult(ok=True, tools=[t.name for t in tools], error=None)
+    except Exception as exc:  # ConnectError / McpError / TimeoutError / ValueError / anything
         reason = str(exc) or type(exc).__name__
         return ProbeResult(ok=False, tools=[], error=reason)
 
