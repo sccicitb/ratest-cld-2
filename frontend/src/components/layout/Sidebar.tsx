@@ -8,6 +8,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
+  Shield,
   Trash2,
 } from "lucide-react";
 
@@ -47,12 +48,14 @@ import {
 } from "@/lib/queries";
 import { cn, groupByDate } from "@/lib/utils";
 import { useSidebarStore } from "@/stores/sidebarStore";
+import { useAuthStore } from "@/stores/authStore";
 import type { Session } from "@/types/chat";
 
 export function Sidebar() {
   const isOpen = useSidebarStore((s) => s.isOpen);
   const toggle = useSidebarStore((s) => s.toggle);
   const collapsed = !isOpen;
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
 
   const { data: sessions, isLoading } = useSessions();
   const createSession = useCreateSession();
@@ -148,6 +151,15 @@ export function Sidebar() {
             to="/tlinga"
             active={location.pathname === "/tlinga"}
           />
+          {isAdmin && (
+            <SidebarAction
+              collapsed={collapsed}
+              icon={<Shield className="size-5" />}
+              label="Admin"
+              to="/admin"
+              active={location.pathname.startsWith("/admin")}
+            />
+          )}
         </SidebarSection>
 
         {/* Recent chats */}
