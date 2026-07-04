@@ -149,11 +149,21 @@ export const getKnowledgeBaseFiles = (filters?: KBFilters): Promise<KnowledgeBas
   return req(`/api/knowledge-base${q ? `?${q}` : ""}`, { headers: authHeaders() }).then(r => r.json());
 };
 
+export interface KBUploadOpts {
+  groupId?: string | null;
+  isPublic?: boolean;
+  tags?: string[];
+}
+
 export async function* uploadKnowledgeBaseFile(
   file: File,
+  opts?: KBUploadOpts,
 ): AsyncGenerator<UploadStreamEvent> {
   const form = new FormData();
   form.append("file", file);
+  if (opts?.groupId != null) form.append("group_id", opts.groupId);
+  if (opts?.isPublic != null) form.append("is_public", String(opts.isPublic));
+  if (opts?.tags && opts.tags.length > 0) form.append("tags", opts.tags.join(","));
   const res = await fetch(PREFIX("/api/knowledge-base/upload"), {
     method: "POST",
     credentials: "include",
@@ -362,3 +372,10 @@ export const changePassword = (data: ChangePasswordPayload): Promise<void> =>
     body: JSON.stringify(data),
     headers: { ...JSON_H, ...authHeaders() },
   }).then(() => {});
+
+/* ------------------------------------------------------------------ */
+/*  Groups — non-admin                                                 */
+/* ------------------------------------------------------------------ */
+
+export const getMyGroups = (): Promise<Group[]> =>
+  req("/api/groups/mine", { headers: authHeaders() }).then((r) => r.json());

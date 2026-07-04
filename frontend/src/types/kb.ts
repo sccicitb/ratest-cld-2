@@ -18,6 +18,8 @@ export interface KnowledgeBaseFile {
   status: FileStatus;
   tags: string[];
   scope?: FileScope; // defaults to "kb"
+  groupId: string | null;
+  isPublic: boolean;
 }
 
 export type UploadTaskStatus =
