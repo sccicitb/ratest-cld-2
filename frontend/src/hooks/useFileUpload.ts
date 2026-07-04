@@ -42,6 +42,10 @@ export function useFileUpload() {
         }
         update(id, { status: "done", progress: 100 });
         qc.invalidateQueries({ queryKey: ["kb-files"] });
+        // Only drop the filing opts on SUCCESS — on error we keep them so a
+        // retry re-sends group_id/is_public/tags (multi-group users + admins
+        // would otherwise fail with group_required / group_or_public_required).
+        filingOpts.current.delete(id);
       } catch (err) {
         update(id, {
           status: "error",
@@ -50,7 +54,6 @@ export function useFileUpload() {
       } finally {
         activeCount.current--;
         files.current.delete(id);
-        filingOpts.current.delete(id);
         pump();
       }
     },
