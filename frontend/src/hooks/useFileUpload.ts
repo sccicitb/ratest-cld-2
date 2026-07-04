@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { uploadKnowledgeBaseFile } from "@/lib/api";
+import { uploadKnowledgeBaseFile, type KBUploadOpts } from "@/lib/api";
 import { generateId, isValidFileType } from "@/lib/utils";
 import type { UploadTask, UploadTaskStatus } from "@/types/kb";
 
@@ -15,6 +15,8 @@ export function useFileUpload() {
   // Files by task id, kept in a ref so `pump` can start an upload without
   // reading React state inside a setState updater (see `pump` below).
   const files = useRef<Map<string, File>>(new Map());
+  // Filing opts per task id — set at addFiles time, read at runTask time.
+  const filingOpts = useRef<Map<string, KBUploadOpts>>(new Map());
 
   const update = useCallback(
     (id: string, patch: Partial<UploadTask>) => {
@@ -29,8 +31,9 @@ export function useFileUpload() {
     async (id: string, file: File) => {
       activeCount.current++;
       update(id, { status: "uploading", progress: 0 });
+      const opts = filingOpts.current.get(id);
       try {
-        for await (const ev of uploadKnowledgeBaseFile(file)) {
+        for await (const ev of uploadKnowledgeBaseFile(file, opts)) {
           if (ev.type === "chunk_progress") {
             update(id, { progress: ev.progress, status: "indexing" });
           } else if (ev.type === "file_resolved") {
@@ -39,6 +42,10 @@ export function useFileUpload() {
         }
         update(id, { status: "done", progress: 100 });
         qc.invalidateQueries({ queryKey: ["kb-files"] });
+        // Only drop the filing opts on SUCCESS — on error we keep them so a
+        // retry re-sends group_id/is_public/tags (multi-group users + admins
+        // would otherwise fail with group_required / group_or_public_required).
+        filingOpts.current.delete(id);
       } catch (err) {
         update(id, {
           status: "error",
@@ -67,12 +74,15 @@ export function useFileUpload() {
   }, [runTask]);
 
   const addFiles = useCallback(
-    (incoming: FileList | File[]) => {
+    (incoming: FileList | File[], opts?: KBUploadOpts) => {
       const newTasks: UploadTask[] = Array.from(incoming).map((file) => {
         const valid = isValidFileType(file.name);
         const status: UploadTaskStatus = valid ? "queued" : "error";
         const id = generateId();
-        if (valid) files.current.set(id, file);
+        if (valid) {
+          files.current.set(id, file);
+          if (opts) filingOpts.current.set(id, opts);
+        }
         return {
           id,
           file,
@@ -93,6 +103,7 @@ export function useFileUpload() {
   const cancelTask = useCallback((id: string) => {
     queue.current = queue.current.filter((q) => q !== id);
     files.current.delete(id);
+    filingOpts.current.delete(id);
     setTasks((prev) => prev.filter((t) => t.id !== id));
   }, []);
 

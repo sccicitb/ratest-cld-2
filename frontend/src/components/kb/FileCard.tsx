@@ -3,6 +3,7 @@ import {
   AlertCircle,
   CheckCircle2,
   FileText,
+  Globe,
   Loader2,
   MoreVertical,
   RefreshCw,
@@ -51,7 +52,13 @@ const STATUS_META: Record<
   error: { label: "Error", variant: "destructive", icon: AlertCircle },
 };
 
-export function FileCard({ file }: { file: KnowledgeBaseFile }) {
+export function FileCard({
+  file,
+  groupName,
+}: {
+  file: KnowledgeBaseFile;
+  groupName?: string;
+}) {
   const deleteFile = useDeleteKBFile();
   const reindexFile = useReindexKBFile();
   const updateTags = useUpdateFileTags();
@@ -100,12 +107,23 @@ export function FileCard({ file }: { file: KnowledgeBaseFile }) {
         </DropdownMenu>
       </div>
 
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Badge variant={status.variant} className="gap-1">
           <StatusIcon className={status.spin ? "size-3 animate-spin" : "size-3"} />
           {status.label}
         </Badge>
-        <span className="text-xs text-muted-foreground">
+        {groupName != null && (
+          <Badge variant="outline" className="text-xs font-normal">
+            {groupName}
+          </Badge>
+        )}
+        {file.isPublic && (
+          <Badge variant="secondary" className="gap-1 text-xs font-normal">
+            <Globe className="size-3" />
+            Public
+          </Badge>
+        )}
+        <span className="ml-auto text-xs text-muted-foreground">
           {file.status === "ready"
             ? `${file.chunkCount} chunks`
             : file.status === "indexing"
@@ -124,7 +142,7 @@ export function FileCard({ file }: { file: KnowledgeBaseFile }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete file?</AlertDialogTitle>
             <AlertDialogDescription>
-              “{file.name}” and its {file.chunkCount} indexed chunks will be
+              "{file.name}" and its {file.chunkCount} indexed chunks will be
               permanently removed.
             </AlertDialogDescription>
           </AlertDialogHeader>

@@ -477,3 +477,86 @@ def test_migration_schema_has_groups_tables():
 
     assert "groups" in Base.metadata.tables
     assert "user_groups" in Base.metadata.tables
+
+
+# ---------------------------------------------------------------------------
+# GET /api/groups/mine — caller's own groups (M6)
+# ---------------------------------------------------------------------------
+
+
+def test_mine_unauthenticated(client):
+    """No token → 401."""
+    r = client.get("/api/groups/mine")
+    assert r.status_code == 401
+
+
+def test_mine_no_groups(client, auth_headers):
+    """Regular user with no group membership → empty list."""
+    r = client.get("/api/groups/mine", headers=auth_headers)
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_mine_returns_own_groups_only(client, admin_headers, auth_headers, demo_user, session_factory):
+    """User A sees only their groups; user B's groups never appear."""
+    # Create two groups via admin
+    g1 = client.post("/api/admin/groups", json={"name": "m6-g1"}, headers=admin_headers).json()
+    g2 = client.post("/api/admin/groups", json={"name": "m6-g2"}, headers=admin_headers).json()
+
+    # Add demo_user to g1 only
+    client.put(
+        f"/api/admin/groups/{g1['id']}/members",
+        json={"userIds": [demo_user["id"]]},
+        headers=admin_headers,
+    )
+
+    r = client.get("/api/groups/mine", headers=auth_headers)
+    assert r.status_code == 200
+    ids = [g["id"] for g in r.json()]
+    assert g1["id"] in ids
+    assert g2["id"] not in ids
+
+
+def test_mine_multiple_groups(client, admin_headers, auth_headers, demo_user):
+    """User in multiple groups sees all of them."""
+    g1 = client.post("/api/admin/groups", json={"name": "m6-multi-1"}, headers=admin_headers).json()
+    g2 = client.post("/api/admin/groups", json={"name": "m6-multi-2"}, headers=admin_headers).json()
+    client.put(
+        f"/api/admin/groups/{g1['id']}/members",
+        json={"userIds": [demo_user["id"]]},
+        headers=admin_headers,
+    )
+    client.put(
+        f"/api/admin/groups/{g2['id']}/members",
+        json={"userIds": [demo_user["id"]]},
+        headers=admin_headers,
+    )
+    r = client.get("/api/groups/mine", headers=auth_headers)
+    assert r.status_code == 200
+    ids = {g["id"] for g in r.json()}
+    assert {g1["id"], g2["id"]} == ids
+
+
+def test_mine_admin_also_works(client, admin_headers, admin_user, session_factory):
+    """Admin with no groups gets empty list (endpoint is not admin-guarded)."""
+    r = client.get("/api/groups/mine", headers=admin_headers)
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+
+def test_mine_response_shape(client, admin_headers, auth_headers, demo_user):
+    """Response items match GroupOut shape (camelCase)."""
+    g = client.post("/api/admin/groups", json={"name": "m6-shape", "defaultTags": ["x"]}, headers=admin_headers).json()
+    client.put(
+        f"/api/admin/groups/{g['id']}/members",
+        json={"userIds": [demo_user["id"]]},
+        headers=admin_headers,
+    )
+    r = client.get("/api/groups/mine", headers=auth_headers)
+    assert r.status_code == 200
+    item = r.json()[0]
+    assert "id" in item
+    assert "name" in item
+    assert "defaultTags" in item
+    assert "memberCount" in item
+    assert "createdAt" in item
