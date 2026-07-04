@@ -164,6 +164,7 @@ from app.chat.routes import router as chat_router  # noqa: E402
 from app.admin.routes import router as admin_router  # noqa: E402
 from app.admin.groups import router as admin_groups_router  # noqa: E402
 from app.admin.mcp import router as admin_mcp_router  # noqa: E402
+from app.groups.routes import router as groups_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
@@ -174,6 +175,7 @@ app.include_router(chat_router, prefix="/api/sessions", tags=["chat"])
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(admin_groups_router, prefix="/api/admin", tags=["admin"])
 app.include_router(admin_mcp_router, prefix="/api/admin", tags=["admin"])
+app.include_router(groups_router, prefix="/api/groups", tags=["groups"])
 
 # SPA serving — opt-in; must be wired AFTER all /api routers (catch-all is last).
 _mount_spa(app)
