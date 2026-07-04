@@ -86,7 +86,10 @@ export function useAdminPatchGroup() {
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: PatchGroupPayload }) =>
       api.adminPatchGroup(id, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: adminQueryKeys.groups }),
+    onSuccess: (_res, { id }) => {
+      void qc.invalidateQueries({ queryKey: adminQueryKeys.groups });
+      void qc.invalidateQueries({ queryKey: adminQueryKeys.group(id) });
+    },
   });
 }
 

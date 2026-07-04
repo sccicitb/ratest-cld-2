@@ -3,6 +3,7 @@ import {
   Check,
   Loader2,
   MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   Shield,
@@ -874,6 +875,7 @@ function McpTab() {
   const [nUrl, setNUrl] = useState("");
   const [nAuth, setNAuth] = useState<"none" | "bearer">("none");
   const [nToken, setNToken] = useState("");
+  const [editServer, setEditServer] = useState<MCPServer | null>(null);
 
   const handleCreate = async () => {
     if (!nName.trim() || !nUrl.trim()) return;
@@ -954,6 +956,7 @@ function McpTab() {
                 patchMcpMutation.mutate({ id: m.id, data: { enabled: !m.enabled } })
               }
               onTest={() => void handleTest(m.id)}
+              onEdit={() => setEditServer(m)}
               onDelete={() => deleteMcpMutation.mutate(m.id)}
             />
           ))}
@@ -1038,7 +1041,126 @@ function McpTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <EditMcpDialog
+        server={editServer}
+        onClose={() => setEditServer(null)}
+        patchMutation={patchMcpMutation}
+      />
     </div>
+  );
+}
+
+function EditMcpDialog({
+  server,
+  onClose,
+  patchMutation,
+}: {
+  server: MCPServer | null;
+  onClose: () => void;
+  patchMutation: ReturnType<typeof useAdminPatchMcpServer>;
+}) {
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [auth, setAuth] = useState<"none" | "bearer">("none");
+  const [token, setToken] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+
+  // Re-seed the form each time a different server opens the dialog.
+  useEffect(() => {
+    if (server) {
+      setName(server.name);
+      setUrl(server.url);
+      setAuth(server.authType);
+      setToken("");
+      setErr(null);
+    }
+  }, [server]);
+
+  const save = async () => {
+    if (!server) return;
+    setErr(null);
+    try {
+      await patchMutation.mutateAsync({
+        id: server.id,
+        data: {
+          name: name.trim(),
+          url: url.trim(),
+          authType: auth,
+          // Token is never returned by the API — only send a new one if typed.
+          token: token ? token : undefined,
+        },
+      });
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Update failed");
+    }
+  };
+
+  return (
+    <Dialog open={server !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit MCP server</DialogTitle>
+          <DialogDescription>
+            Update the server’s details. Leave the token blank to keep the existing one.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <Label>Name</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>URL</Label>
+            <Input value={url} onChange={(e) => setUrl(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>Auth type</Label>
+            <div className="flex gap-2">
+              {(["none", "bearer"] as const).map((a) => (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => setAuth(a)}
+                  className={cn(
+                    "rounded-md border px-3 py-1 text-sm transition-colors",
+                    auth === a
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border hover:bg-muted",
+                  )}
+                >
+                  {a}
+                </button>
+              ))}
+            </div>
+          </div>
+          {auth === "bearer" && (
+            <div className="space-y-1">
+              <Label>Token</Label>
+              <Input
+                type="password"
+                placeholder="Leave blank to keep existing"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+              />
+            </div>
+          )}
+          {err && <p className="text-sm text-destructive">{err}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => void save()}
+            disabled={!name.trim() || !url.trim() || patchMutation.isPending}
+          >
+            {patchMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1047,10 +1169,11 @@ interface McpRowProps {
   testRecord: TestRecord;
   onToggle: () => void;
   onTest: () => void;
+  onEdit: () => void;
   onDelete: () => void;
 }
 
-function McpRow({ server, testRecord, onToggle, onTest, onDelete }: McpRowProps) {
+function McpRow({ server, testRecord, onToggle, onTest, onEdit, onDelete }: McpRowProps) {
   return (
     <TableRow>
       <TableCell className="font-medium">{server.name}</TableCell>
@@ -1083,8 +1206,16 @@ function McpRow({ server, testRecord, onToggle, onTest, onDelete }: McpRowProps)
             <Badge
               variant="outline"
               className="gap-1 border-green-500 text-xs text-green-600"
+              title={
+                testRecord.result.tools?.length
+                  ? `Tools: ${testRecord.result.tools.join(", ")}`
+                  : undefined
+              }
             >
               <Check className="size-3" /> Connected
+              {testRecord.result.tools?.length
+                ? ` · ${testRecord.result.tools.length} tool${testRecord.result.tools.length > 1 ? "s" : ""}`
+                : ""}
             </Badge>
           )}
           {testRecord.result && !testRecord.result.ok && (
@@ -1102,6 +1233,9 @@ function McpRow({ server, testRecord, onToggle, onTest, onDelete }: McpRowProps)
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={onEdit}>
+              <Pencil className="size-4" /> Edit
+            </DropdownMenuItem>
             <DropdownMenuItem variant="destructive" onSelect={onDelete}>
               <Trash2 className="size-4" /> Delete
             </DropdownMenuItem>
