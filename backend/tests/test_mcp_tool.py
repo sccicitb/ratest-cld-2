@@ -58,7 +58,7 @@ def _run(coro):
 
 def test_name_is_namespaced():
     t = _make_tool(server_name="mysvr", tool_name="dothing")
-    assert t.name == "mysvr.dothing"
+    assert t.name == "mysvr__dothing"
 
 
 def test_schema_openai_shape():
@@ -67,7 +67,7 @@ def test_schema_openai_shape():
     s = t.schema()
     assert s["type"] == "function"
     fn = s["function"]
-    assert fn["name"] == "srv.echo"
+    assert fn["name"] == "srv__echo"
     assert fn["description"] == "Do it"
     assert fn["parameters"] == schema
 
