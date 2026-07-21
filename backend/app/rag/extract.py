@@ -1,10 +1,12 @@
-"""Document text extraction (§8.1): PyMuPDF + python-docx + plain text.
+"""Document text extraction (§8.1): PDFOxide + python-docx + plain text.
 
-Routing is by filename extension. PDFs go through PyMuPDF first; we measure
-the text layer's density and route to Surya OCR (`app.rag.ocr`) only when
-it's thin/absent — a real text PDF never pays for OCR (§6). `.doc` (legacy
-binary Word) needs a LibreOffice conversion step that isn't wired here, so
-it raises a clear, actionable error.
+Routing is by filename extension. PDFs go through PDFOxide: each page is read
+with `extract_text_auto`, which returns the native text layer and transparently
+OCRs (PaddleOCR-v4 ONNX) any scanned/image-only page — no separate OCR module.
+PDFOxide is stricter than PyMuPDF about malformed files, so a broken PDF is
+repaired once via PyMuPDF before opening (PyMuPDF is kept solely for this).
+`.doc` (legacy binary Word) needs a LibreOffice conversion step that isn't
+wired here, so it raises a clear, actionable error.
 """
 from __future__ import annotations
 
@@ -18,46 +20,35 @@ SUPPORTED_KB_TYPES = {".pdf", ".md", ".txt", ".docx", ".doc", ".csv", ".json"}
 _TEXT_EXTENSIONS = {".md", ".txt", ".csv", ".json"}
 
 
-def _is_thin(text: str, page_count: int) -> bool:
-    """A page is "thin" if its text layer averages below the configured floor."""
-    if page_count == 0:
-        return True
-    return (len(text) / page_count) < settings.ocr_min_chars_per_page
+def _open_pdf_oxide(data: bytes):
+    """Open PDF bytes with PDFOxide, repairing a malformed file via PyMuPDF.
 
+    PDFOxide rejects some PDFs PyMuPDF tolerates (e.g. "Invalid cross-reference
+    table"). On failure, round-trip the bytes through PyMuPDF's repair (garbage
+    collect + clean) and retry once.
+    """
+    import pdf_oxide
 
-def _ocr_pdf(doc) -> str:
-    """Render every page to an image and OCR it via Surya."""
-    from PIL import Image
+    try:
+        return pdf_oxide.PdfDocument.from_bytes(data)
+    except Exception:
+        import fitz
 
-    from app.rag.ocr import ocr_images
-
-    images = []
-    for page in doc:
-        pix = page.get_pixmap(dpi=150)
-        images.append(Image.frombytes("RGB", [pix.width, pix.height], pix.samples))
-
-    page_texts = ocr_images(images)
-    return "\n".join(page_texts)
+        clean = fitz.open(stream=data, filetype="pdf").tobytes(
+            garbage=4, clean=True, deflate=True
+        )
+        return pdf_oxide.PdfDocument.from_bytes(clean)
 
 
 def _extract_pdf(storage_key: str) -> str:
-    import fitz
-
     with open_blob(storage_key) as f:
         data = f.read()
 
-    doc = fitz.open(stream=data, filetype="pdf")
-    try:
-        text = "\n".join(page.get_text() for page in doc)
-
-        if _is_thin(text, doc.page_count) and settings.ocr_enabled:
-            return _ocr_pdf(doc)
-        # OCR disabled (or text was dense enough): surface whatever PyMuPDF
-        # found rather than raising — a thin text layer is still useful for
-        # search, and a hard failure here would block ingestion entirely.
-        return text
-    finally:
-        doc.close()
+    doc = _open_pdf_oxide(data)
+    # extract_text_auto: native text, transparently OCRing scanned pages.
+    # extract_text: native only (used when OCR is disabled).
+    read = doc.extract_text_auto if settings.ocr_enabled else doc.extract_text
+    return "\n".join(read(pg) for pg in range(doc.page_count()))
 
 
 def _extract_docx(storage_key: str) -> str:

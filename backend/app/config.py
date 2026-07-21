@@ -56,9 +56,6 @@ class Settings(BaseSettings):
     ocr_languages: list[str] = ["english", "latin"]
     # Optional override for the PDFOxide model cache (PDF_OXIDE_MODEL_DIR).
     pdf_oxide_model_dir: str | None = None
-    # NOTE: ocr_min_chars_per_page is intentionally dropped in Task 2 — PDFOxide
-    # routes text-vs-OCR internally. Left here until extract.py stops using it.
-    ocr_min_chars_per_page: int = 100
 
     # --- Admin bootstrap (§M1) ---
     admin_email: str | None = None
