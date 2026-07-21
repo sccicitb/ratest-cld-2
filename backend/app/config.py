@@ -25,10 +25,13 @@ class Settings(BaseSettings):
     model_name: str = "qwen"
     model_api_key: str = "not-needed"  # llama-server ignores it; set for hosted APIs
     
-    # --- Chat model: any OpenAI-compatible endpoint (§7, §12) ---
-    # model_base_url: str = "https://api.deepseek.com"
-    # model_name: str = "deepseek-v4-flash"
-    # model_api_key: str = "sk-1de151cd91d84aa4ad2d0eb6ac699434"  # llama-server ignores it; set for hosted APIs
+    # To use a hosted provider (e.g. DeepSeek), override these in .env — do NOT
+    # hardcode keys here. Example .env:
+    #   MODEL_BASE_URL=https://api.deepseek.com
+    #   MODEL_NAME=deepseek-chat        # non-thinking; supports tool calling
+    #   MODEL_API_KEY=sk-...
+    # Note: DeepSeek's API rejects image_url (no vision); use llama-server/Qwen-VL
+    # for image attachments. See scripts/check_provider_vision.py.
 
     # --- Embeddings / rerank: FlagEmbedding (BGE-M3), in-process (§8.1, §8.5) ---
     embed_model: str = "BAAI/bge-m3"

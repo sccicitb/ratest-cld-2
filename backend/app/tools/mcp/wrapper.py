@@ -4,7 +4,7 @@ Carries the server's CONNECTION CONFIG + the tool's schema.  Each `execute()`
 opens a SHORT-LIVED connection just for that call and tears it down immediately
 — no session is held across the SSE generator's yields (the anyio-safety fix).
 
-`name` is namespaced as `{server_name}.{tool_name}` so MCP tools never
+`name` is namespaced as `{server_name}__{tool_name}` so MCP tools never
 collide with built-ins.  `ctx` is accepted to satisfy the protocol but is NOT
 forwarded to MCP calls — external tools never receive user scope.
 """
@@ -36,7 +36,10 @@ class MCPTool:
         transport: str,
         headers: dict[str, str] | None,
     ) -> None:
-        self.name = f"{server_name}.{tool_name}"
+        # Separator is "__" (not ".") so the exposed function name stays within
+        # the OpenAI/DeepSeek tool-name regex ^[a-zA-Z0-9_-]{1,64}$. A dot is
+        # accepted by lenient servers (llama-server) but 400s strict hosted APIs.
+        self.name = f"{server_name}__{tool_name}"
         self._tool_name = tool_name
         self._description = description
         self._input_schema = input_schema

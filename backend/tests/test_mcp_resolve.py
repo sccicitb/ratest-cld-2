@@ -130,8 +130,8 @@ def test_enabled_granted_server_returns_namespaced_tools(session_factory, monkey
         db.close()
 
     names = {t.name for t in result}
-    assert "mysrv.dowork" in names
-    assert "mysrv.domore" in names
+    assert "mysrv__dowork" in names
+    assert "mysrv__domore" in names
 
 
 def test_disabled_server_is_skipped(session_factory, monkeypatch):
@@ -205,8 +205,8 @@ def test_down_server_isolated_other_server_works(session_factory, monkeypatch):
         db.close()
 
     names = {t.name for t in result}
-    assert "good.ping" in names
-    assert not any(n.startswith("bad.") for n in names)
+    assert "good__ping" in names
+    assert not any(n.startswith("bad__") for n in names)
 
 
 def test_multiple_groups_tools_merged(session_factory, monkeypatch):
@@ -234,8 +234,8 @@ def test_multiple_groups_tools_merged(session_factory, monkeypatch):
         db.close()
 
     names = {t.name for t in result}
-    assert "srv_a.alpha" in names
-    assert "srv_b.beta" in names
+    assert "srv_a__alpha" in names
+    assert "srv_b__beta" in names
 
 
 def test_server_granted_to_two_of_callers_groups_not_duplicated(session_factory, monkeypatch):
@@ -262,4 +262,4 @@ def test_server_granted_to_two_of_callers_groups_not_duplicated(session_factory,
         db.close()
 
     names = [t.name for t in result]
-    assert names == ["shared_srv.solo"]  # exactly one, not duplicated
+    assert names == ["shared_srv__solo"]  # exactly one, not duplicated
