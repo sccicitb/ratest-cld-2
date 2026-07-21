@@ -27,9 +27,13 @@ async def ingest(
 ) -> AsyncIterator[dict[str, Any]]:
     """Extract, chunk, embed, and upsert a `KBFile`'s blob; finalize its status.
 
-    Yields `chunk_progress` events as batches are embedded/upserted. On any
-    failure (extraction, chunking, embed, or upsert), marks the file
-    `status="error"` and re-raises so the caller (route) can surface an error event.
+    Yields `chunk_progress` events as batches are embedded/upserted. If the
+    ingest doesn't reach a terminal `status="ready"` — whether from a normal
+    failure (extraction, chunking, embed, upsert) or a mid-stream cancellation
+    (a client disconnect raises asyncio.CancelledError, a BaseException) — the
+    file is finalized to `status="error"` so it's never stranded at "indexing"
+    (visible in the UI but with no/partial chunks, so never retrievable). Real
+    failures still propagate so the caller (route) can surface an error event.
     """
     from app.models import KBFile  # local import: avoid import cycles
 
@@ -43,6 +47,7 @@ async def ingest(
     with open_blob(file.storage_key):
         pass
 
+    finalized = False
     try:
         text = extract_text(file.storage_key, file.name)
         pieces = chunk_text(text)
@@ -53,6 +58,7 @@ async def ingest(
             file.status = "ready"
             file.chunk_count = 0
             db.commit()
+            finalized = True
             yield {
                 "type": "chunk_progress",
                 "fileName": file.name,
@@ -97,8 +103,16 @@ async def ingest(
         file.status = "ready"
         file.chunk_count = total
         db.commit()
-    except Exception:
-        file.status = "error"
-        file.chunk_count = 0
-        db.commit()
-        raise
+        finalized = True
+    finally:
+        if not finalized:
+            # Didn't reach a terminal 'ready'. Covers both a normal Exception
+            # (extract/chunk/embed/upsert failure — which still propagates out
+            # of the `finally`) AND a BaseException like asyncio.CancelledError
+            # raised when the client disconnects mid-stream (refresh / network
+            # loss); the latter would slip past an `except Exception` and strand
+            # the file at 'indexing'. Finalize to 'error' so the state is honest
+            # and the file can be reindexed.
+            file.status = "error"
+            file.chunk_count = 0
+            db.commit()

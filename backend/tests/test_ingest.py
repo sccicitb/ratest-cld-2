@@ -183,6 +183,38 @@ def test_ingest_marks_error_on_embed_failure(db_session, qdrant: QdrantClient, t
     assert file.chunk_count == 0
 
 
+def test_ingest_marks_error_when_cancelled_midway(db_session, qdrant: QdrantClient, tmp_path):
+    """Client disconnect (refresh / network loss) cancels the streaming ingest
+    generator with asyncio.CancelledError — a BaseException, so it slips past
+    ingest's `except Exception`. The file must NOT be left stranded at
+    'indexing' (visible in the UI, no/partial chunks, never retrievable); an
+    interrupted ingest should finalize to 'error' like every other failure.
+    """
+    storage_key = "doc.txt"
+    text = "Hello world. " * 500  # several chunks -> at least one embed batch + yield
+    (tmp_path / storage_key).write_text(text, encoding="utf-8")
+
+    user = _make_user(db_session)
+    file = _make_kb_file(db_session, user.id, storage_key, "doc.txt")
+
+    fake = _FakeEmbedder()
+
+    async def _drive_then_cancel():
+        gen = ingest(db_session, file.id, client=qdrant, embedder=fake)
+        await gen.__anext__()  # run through the first batch; suspend at the yield
+        # Simulate Starlette cancelling the response generator on disconnect.
+        with pytest.raises(asyncio.CancelledError):
+            await gen.athrow(asyncio.CancelledError())
+
+    asyncio.run(_drive_then_cancel())
+
+    db_session.refresh(file)
+    assert file.status == "error", (
+        f"Interrupted ingest left status='{file.status}', expected 'error' "
+        "(orphaned 'indexing' file: shows in UI but has no knowledge)"
+    )
+
+
 def test_ingest_marks_error_on_ocr_failure(db_session, qdrant: QdrantClient, tmp_path, monkeypatch):
     """Surya OCR failure on scanned PDF -> status=error (not left at indexing)."""
     import fitz
