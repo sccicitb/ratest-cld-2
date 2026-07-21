@@ -91,6 +91,12 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.exception("Admin bootstrap failed — continuing without bootstrap.")
 
+    # OCR (PDFOxide/PaddleOCR) loads onnxruntime dynamically — point it at the
+    # installed dylib so scanned-PDF OCR works; degrades to native text if absent.
+    from app.rag.ocr_models import ensure_ort_dylib
+
+    ensure_ort_dylib()
+
     yield
 
 
