@@ -32,3 +32,14 @@ def ensure_ort_dylib() -> str | None:
         return None
     os.environ["ORT_DYLIB_PATH"] = hits[0]
     return hits[0]
+
+
+def prefetch_ocr_models(languages: list[str]) -> str:
+    """Download PaddleOCR-ONNX detector + per-language recognizers (~21 MB).
+
+    Returns the model cache dir. Wraps PDFOxide's downloader; requires network
+    (air-gapped deploys use `pdf_oxide.pdf_oxide.model_manifest()` instead).
+    """
+    import pdf_oxide
+
+    return pdf_oxide.pdf_oxide.prefetch_models(languages)
