@@ -101,7 +101,32 @@ async def lifespan(app: FastAPI):
             "native text (no crash). Install onnxruntime / set ORT_DYLIB_PATH."
         )
 
+    # Ingest-job registry (detached, disconnect-surviving KB ingest) + reaper.
+    from app.db import SessionLocal, get_session_factory
+    from app.rag.embedder import get_embedder
+    from app.rag.ingest_jobs import IngestJobRegistry, reap_stranded
+    from app.rag.vectors import get_client
+
+    app.state.ingest_jobs = IngestJobRegistry(
+        session_factory=get_session_factory(),
+        client=get_client(),
+        embedder=get_embedder(),
+        max_concurrent=settings.max_concurrent_ingests,
+    )
+    try:
+        _rdb = SessionLocal()
+        try:
+            reaped = reap_stranded(_rdb)
+            if reaped:
+                log.info("Reaper: marked %d stranded 'indexing' file(s) as error.", reaped)
+        finally:
+            _rdb.close()
+    except Exception:
+        log.exception("Startup reaper failed — continuing.")
+
     yield
+
+    await app.state.ingest_jobs.shutdown()
 
 
 def _bootstrap_admin() -> None:
