@@ -102,8 +102,10 @@ class IngestJobRegistry:
         for t in tasks:
             try:
                 await t
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
+            except Exception:
+                logger.exception("ingest task errored during shutdown")
 
 
 def reap_stranded(db) -> int:

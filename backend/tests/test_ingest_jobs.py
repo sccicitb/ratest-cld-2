@@ -139,5 +139,8 @@ def test_reap_stranded_marks_indexing_error(engine_factory):
 
     assert n == 2
     assert db.get(KBFile, ids["a"]).status == "error"
+    assert db.get(KBFile, ids["a"]).chunk_count == 0
     assert db.get(KBFile, ids["b"]).status == "error"
+    assert db.get(KBFile, ids["b"]).chunk_count == 0
     assert db.get(KBFile, ids["c"]).status == "ready"  # untouched
+    assert db.get(KBFile, ids["c"]).chunk_count == 5
