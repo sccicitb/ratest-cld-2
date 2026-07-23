@@ -326,25 +326,26 @@ entry path. The trigger for OCR is **"scanned / no usable text layer,"** not siz
 | File | Chat — small (inline) | Chat — large (ingest) | KB page (always ingest) |
 |---|---|---|---|
 | Text-layer PDF / text files | **PyMuPDF** → inline text | PyMuPDF → chunk → embed | PyMuPDF → chunk → embed |
-| Scanned / image-only PDF | **Surya OCR** → inline text | Surya OCR → chunk → embed | Surya OCR → chunk → embed |
+| Scanned / image-only PDF | **PDFOxide** (PaddleOCR-v4 ONNX) → inline text | PDFOxide → chunk → embed | PDFOxide → chunk → embed |
 | Standalone image (`.png/.jpg`) | **Qwen vision** (reads pixels live) | rare | **N/A — not a KB type** |
 
 Rules that fall out of this:
 - **Detect, don't guess:** parse with PyMuPDF first, measure text density; route to
-  **Surya** only when the text layer is thin/absent. A big *text* PDF still uses
+  **PDFOxide OCR** only when the text layer is thin/absent. A big *text* PDF still uses
   PyMuPDF (faster, more accurate than OCR).
-- **Scanned → always Surya** (even when small): page-images cost ~1.5k–4.8k tokens
+- **Scanned → always PDFOxide** (even when small): page-images cost ~1.5k–4.8k tokens
   *each*, so OCR-to-text beats inlining a multi-page scan as vision.
 - **Vision is chat-only.** A standalone image has no inline escape hatch on the KB
   page, so **images are not a KB upload type** (see §8.3). They remain valid chat
   attachments, read live by Qwen.
-- **Surya licensing caveat:** code is Apache-2.0, but model **weights are AI Pubs
-  Open Rail-M** — free under $5M funding/revenue, paid license above. If this goes
-  commercial past that bar, fall back to Tesseract or Qwen-vision-as-OCR.
+- **OCR note:** PDFOxide uses PaddleOCR-v4 ONNX (inference via onnxruntime); this
+  supersedes the original Surya design (dropped for its ~10 GB RAM footprint; see
+  docs/superpowers/specs/2026-07-21-pdfoxide-extractor-swap-design.md).
 
-Surya and Qwen-vision both require their runtime to be present: Surya runs
-in-process in the ingestion worker (auto-downloads weights); Qwen vision requires
-the llama-server endpoint to have the multimodal projector (`mmproj`) loaded.
+OCR (PDFOxide) and Qwen-vision require their runtimes: PDFOxide runs in-process in
+the ingestion worker (requires onnxruntime dylib + ~21 MB ONNX models, provisioned
+via scripts/setup_ocr_models.py); Qwen vision requires the llama-server endpoint
+to have the multimodal projector (`mmproj`) loaded.
 
 ### Three outcomes the composer produces (frontend → backend)
 
@@ -628,11 +629,15 @@ Triggered by KB upload, KB reindex, and session-scoped chat ingestion. Steps:
    in §8.3 and `SUPPORTED_FILE_TYPES`.)
 2. **Text-layer detection → parser vs OCR** — parse the PDF and measure text
    density. If it has a real text layer, use the extracted text. If it's
-   **scanned / image-only** (thin or no text), route to **Surya OCR → text**
-   (in-process in the worker; weights auto-download). Either way the output is
-   **text**, which flows into the same chunk→embed path — BGE-M3 is text-only, so
-   there is no separate image-embedding branch. (Standalone images are chat-only
-   via Qwen vision, never ingested — §6/§8.3.)
+   **scanned / image-only** (thin or no text), route to **PDFOxide
+   (PaddleOCR-v4 ONNX) → text**. OCR runs in-process on the ingestion worker,
+   routed automatically per page; PyMuPDF is retained solely as a repair pre-pass
+   for malformed PDFs. Runtime requires the onnxruntime shared library
+   (ORT_DYLIB_PATH, set at startup) and the ~21 MB OCR models (see
+   scripts/setup_ocr_models.py). Either way the output is **text**, which flows
+   into the same chunk→embed path — BGE-M3 is text-only, so there is no separate
+   image-embedding branch. (Standalone images are chat-only via Qwen vision,
+   never ingested — §6/§8.3.)
 3. **Chunk** — ~500–1000 tokens, ~10–15% overlap, split on structure.
 4. **Embed** — **BGE-M3** via **FlagEmbedding** (`BGEM3FlagModel`), running
    **in-process** with torch — no embedding server to host. **Device is
@@ -649,7 +654,7 @@ Triggered by KB upload, KB reindex, and session-scoped chat ingestion. Steps:
    **not** generated or stored — §8.5.) The **same pinned model** is used for
    indexing and querying — a mismatch silently breaks retrieval. BGE-M3 needs
    **no** query/passage prefixes. (Scanned pages are already text by this point,
-   via Surya in step 2 — BGE-M3 embeds that text like any other.)
+   via PDFOxide OCR in step 2 — BGE-M3 embeds that text like any other.)
 5. **Store** — upsert each chunk as a **Qdrant point**: its dense + sparse
    vectors, plus a **payload** carrying `content`, `file_id`, `chunk_idx`,
    `tags`, and the **denormalized scope fields** (`user_id`, `scope`,
@@ -791,7 +796,7 @@ kb_files:    id (pk), user_id (fk→users, cascade), scope(kb|session)="kb",
              tags (JSON or child table — NOT a native array), storage_key
              [idx: (user_id, scope, upload_date desc), (session_id)]
              # NOTE: no `modality` column in v1 — every ingested file becomes
-             # text (PyMuPDF or Surya OCR), so there is no text-vs-multimodal
+             # text (PyMuPDF or PDFOxide OCR), so there is no text-vs-multimodal
              # distinction to store. Add one only if a visual-embedding path
              # (e.g. ColBERT page-images) is introduced later.
 ```
@@ -980,9 +985,9 @@ can't read directly — the sandbox fetches and processes them. It's also the
 producer for future artifact/canvas output (charts/files).
 
 **Deployment (fits the locked topology).** The app runs on **Windows + CUDA**
-(FlagEmbedding on GPU, Surya). Qdrant and the sandbox run in a **CPU Linux VM** via
-Docker (same engine, two isolation domains). The sandbox is a small
-**code-exec service** in that VM; the app reaches it over HTTP.
+(FlagEmbedding on GPU; PDFOxide OCR on CPU or GPU as configured). Qdrant and the
+sandbox run in a **CPU Linux VM** via Docker (same engine, two isolation domains).
+The sandbox is a small **code-exec service** in that VM; the app reaches it over HTTP.
 
 **Isolation = two walls + network (no Firecracker/E2B; no nested virt).** The
 Hyper-V **VM is the hardware-isolation boundary**; ephemeral **containers**
@@ -1063,9 +1068,10 @@ Source: constants in [`src/lib/mock.ts`](../src/lib/mock.ts).
 - [ ] **Ingress is token-based:** small attachments inline; large ones ingest
       session-scoped; the byte threshold is not the source of truth.
 - [ ] **Scanned / image-only PDFs** are detected (thin text layer) and routed
-      through **Surya OCR → text**, then chunked/embedded like any text — there
-      is no multimodal embedding branch (BGE-M3 is text-only). Standalone images
-      are chat-only via Qwen vision, never KB-ingested.
+      through **PDFOxide OCR (PaddleOCR-v4 ONNX) → text**, then chunked/embedded
+      like any text — there is no multimodal embedding branch (BGE-M3 is
+      text-only). Standalone images are chat-only via Qwen vision, never
+      KB-ingested.
 - [ ] **Attachment bytes upload at send:** `POST /sessions/:id/attachments`
       (multipart → SSE) stores blobs, **re-decides inline vs ingest by token
       count** (returns authoritative `ingested`), streams `chunk_progress` +

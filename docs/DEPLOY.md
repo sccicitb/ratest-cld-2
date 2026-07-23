@@ -104,14 +104,29 @@ Edit `backend/.env` and fill in all `<placeholder>` values:
 - `COOKIE_SECURE=true`
 - `SPA_DIR=../frontend/build/client`
 
-### 3c · Run the database migration
+### 3c · OCR models (PDFOxide / PaddleOCR)
+
+Scanned-PDF OCR needs onnxruntime (installed as a dependency) and ~21 MB of
+ONNX models. Provision once per deploy:
+
+```powershell
+cd backend
+env -u VIRTUAL_ENV uv run python scripts/setup_ocr_models.py
+```
+
+Air-gapped hosts (no outbound internet): run the above with `--manifest` on a
+connected machine, fetch the listed files, and drop them into the directory
+named by `PDF_OXIDE_MODEL_DIR` on the target. The app sets `ORT_DYLIB_PATH`
+itself at startup; if onnxruntime is missing, OCR degrades to native text (no crash).
+
+### 3d · Run the database migration
 
 ```powershell
 cd backend
 uv run alembic upgrade head
 ```
 
-### 3d · Start the backend
+### 3e · Start the backend
 
 ```powershell
 cd backend
@@ -120,7 +135,7 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 The backend serves both `/api/*` and the built SPA at `/`.
 
-### 3e · Run as a Windows service (NSSM)
+### 3f · Run as a Windows service (NSSM)
 
 For production, use [NSSM](https://nssm.cc/) to manage the process:
 
@@ -188,7 +203,7 @@ curl https://your-domain.example.com/api/health
 | Chat is agentic: `calling_tool` SSE per search call | Ask a question requiring retrieval; watch SSE stream |
 | Scope is server-injected: no cross-session leak | Two users; verify their chunks don't cross |
 | Ingress is token-based: small → inline, large → ingest | Send small (<6k tokens) and large files |
-| Scanned PDFs → Surya OCR → chunks/embeddings | Upload a scanned PDF; verify chunks in KB |
+| Scanned PDFs → PDFOxide OCR → chunks/embeddings | Upload a scanned PDF; verify chunks in KB |
 | Attachment bytes upload at send: SSE streams chunk_progress + attachment_resolved | Upload via chat UI; inspect SSE |
 | KB upload: multipart SSE; polling while `indexing` | Upload to KB; watch `indexing → ready` transition |
 | Auth cookie: httpOnly/Secure/SameSite=Lax; refresh-on-load + 401→refresh→retry | Check browser DevTools → Cookies; network tab |
