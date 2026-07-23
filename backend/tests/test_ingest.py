@@ -215,35 +215,27 @@ def test_ingest_marks_error_when_cancelled_midway(db_session, qdrant: QdrantClie
     )
 
 
-def test_ingest_marks_error_on_ocr_failure(db_session, qdrant: QdrantClient, tmp_path, monkeypatch):
-    """Surya OCR failure on scanned PDF -> status=error (not left at indexing)."""
+def test_ingest_marks_error_on_pdf_extraction_failure(db_session, qdrant: QdrantClient, tmp_path, monkeypatch):
+    """PDFOxide extraction failure on a PDF -> status=error (not left at indexing)."""
     import fitz
+    import pdf_oxide
 
-    # Create a thin/scanned PDF: a page with no text layer
-    # so extraction will route to OCR.
-    storage_key = "scanned.pdf"
+    storage_key = "broken.pdf"
     doc = fitz.open()
-    page = doc.new_page(width=612, height=792)
-    # Just add a rectangle (no text), so PyMuPDF extract gets empty text,
-    # making it "thin" and triggering OCR.
-    page.draw_rect(fitz.Rect(50, 50, 200, 200), color=(0, 0, 0), fill=(1, 1, 1))
-    pdf_bytes = doc.write()
+    doc.new_page()
+    (tmp_path / storage_key).write_bytes(doc.write())
     doc.close()
 
-    (tmp_path / storage_key).write_bytes(pdf_bytes)
-
     user = _make_user(db_session)
-    file = _make_kb_file(db_session, user.id, storage_key, "scanned.pdf")
+    file = _make_kb_file(db_session, user.id, storage_key, "broken.pdf")
 
-    # Monkeypatch ocr_images to raise instead of loading real Surya.
-    def failing_ocr(images):
-        raise RuntimeError("OCR boom")
+    def _boom(self, page):
+        raise RuntimeError("pdfoxide boom")
 
-    monkeypatch.setattr("app.rag.ocr.ocr_images", failing_ocr)
+    monkeypatch.setattr(pdf_oxide.PdfDocument, "extract_text_auto", _boom, raising=True)
 
     fake = _FakeEmbedder()
-
-    with pytest.raises(RuntimeError, match="OCR boom"):
+    with pytest.raises(RuntimeError, match="pdfoxide boom"):
         asyncio.run(_collect(ingest(db_session, file.id, client=qdrant, embedder=fake)))
 
     db_session.refresh(file)

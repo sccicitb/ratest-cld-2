@@ -50,9 +50,12 @@ class Settings(BaseSettings):
     # --- Vision (§v1.1-V2): max total image_url blocks re-fed to the model ---
     max_vision_images_per_turn: int = 6
 
-    # --- OCR (§6, §8.1): Surya, in-process, only for thin/absent text layers ---
-    ocr_enabled: bool = True
-    ocr_min_chars_per_page: int = 100  # below this average, treat the PDF as scanned
+    # --- OCR (§6, §8.1): PDFOxide / PaddleOCR-v4 ONNX (see 2026-07-21 spec) ---
+    ocr_enabled: bool = True  # when False, extract native text only (no OCR)
+    # Recognition models to provision (Latin covers the Indonesian corpus).
+    ocr_languages: list[str] = ["english", "latin"]
+    # Optional override for the PDFOxide model cache (PDF_OXIDE_MODEL_DIR).
+    pdf_oxide_model_dir: str | None = None
 
     # --- Admin bootstrap (§M1) ---
     admin_email: str | None = None

@@ -13,7 +13,7 @@ this README is just how to run it.
 | Vectors | Qdrant (dense + sparse named vectors) |
 | Embeddings / rerank | BGE-M3 + bge-reranker-v2-m3, **in-process** via FlagEmbedding (torch/GPU) |
 | Chat LLM | any OpenAI-compatible endpoint (`MODEL_BASE_URL`) — default Qwen on llama-server |
-| Extraction | PyMuPDF (text PDFs) + Surya OCR (scanned) |
+| Extraction | PDFOxide (PaddleOCR-v4 ONNX for PDF text + OCR; PyMuPDF pre-pass for malformed) |
 
 ## Prerequisites
 
@@ -104,7 +104,7 @@ backend/
 
 ## Implementation status
 
-Feature-complete for v1: auth, sessions, KB ingestion (+ Surya OCR), agentic
+Feature-complete for v1: auth, sessions, KB ingestion (+ PDFOxide OCR), agentic
 retrieval, the SSE tool-use chat loop, chat attachments, **MCP external tools**
 (§12.2), and the **`execute_code` sandbox** (§13) are all implemented and tested.
 The frontend is wired to the real backend. **Remaining:** production deployment

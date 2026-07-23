@@ -1,8 +1,7 @@
-"""Tests for app.rag.extract (Task 3.2 / 3.8): PyMuPDF/docx/text routing + OCR.
+"""Tests for app.rag.extract (Task 3.2 / Task 2 PDFOxide swap): PDFOxide/docx/text routing.
 
-Routing tests monkeypatch `app.rag.ocr.ocr_images` with a FAKE OCR so they're
-fast and never load Surya. The one real-Surya proof lives in
-`tests/test_ocr.py`.
+Routing tests monkeypatch `pdf_oxide.PdfDocument` methods so they're fast and
+never load the real PaddleOCR models.
 """
 from __future__ import annotations
 
@@ -33,94 +32,91 @@ def test_supported_kb_types_contains_expected_extensions():
     assert SUPPORTED_KB_TYPES == {".pdf", ".md", ".txt", ".docx", ".doc", ".csv", ".json"}
 
 
-def test_extract_text_from_text_layer_pdf(blob_dir):
+def test_extract_text_layer_pdf_uses_native_text(blob_dir):
+    """A real text PDF extracts its text via PDFOxide (no OCR needed)."""
     import fitz
 
     doc = fitz.open()
     page = doc.new_page()
-    # Enough text to clear the OCR density threshold (ocr_min_chars_per_page).
-    page.insert_text((72, 72), "Hello extract test. " * 10)
-    pdf_path = blob_dir / "sample.pdf"
-    doc.save(str(pdf_path))
+    page.insert_text((72, 72), "Hello from a text layer.")
+    key = _write(blob_dir, "text.pdf", doc.write())
     doc.close()
 
-    text = extract_text("sample.pdf", "sample.pdf")
-    assert "Hello extract test" in text
+    out = extract_text(key, "text.pdf")
+    assert "Hello from a text layer." in out
 
 
-def _make_pdf(blob_dir, name: str, *, with_text: bool) -> None:
+def test_extract_pdf_routes_to_ocr_when_enabled(blob_dir, monkeypatch):
+    """ocr_enabled=True → each page read via extract_text_auto (OCR-capable)."""
     import fitz
+    import pdf_oxide
 
-    doc = fitz.open()
-    page = doc.new_page()
-    if with_text:
-        # Enough text to clear the OCR density threshold (ocr_min_chars_per_page).
-        page.insert_text((72, 72), "Hello extract test. " * 10)
-    else:
-        # Draw a rectangle only — no text layer at all (simulates a scanned page).
-        page.draw_rect(fitz.Rect(10, 10, 100, 100))
-    doc.save(str(blob_dir / name))
-    doc.close()
-
-
-def test_extract_text_from_scanned_pdf_routes_to_ocr(blob_dir, monkeypatch):
-    calls: list[list] = []
-
-    def fake_ocr_images(images):
-        calls.append(images)
-        return [OCR_SENTINEL for _ in images]
-
-    # _ocr_pdf imports ocr_images locally, so patch where it's looked up.
-    import app.rag.ocr as ocr_module
-
-    monkeypatch.setattr(ocr_module, "ocr_images", fake_ocr_images)
-
-    _make_pdf(blob_dir, "scanned.pdf", with_text=False)
-
-    text = extract_text("scanned.pdf", "scanned.pdf")
-    assert text == OCR_SENTINEL
-    assert len(calls) == 1
-    assert len(calls[0]) == 1  # one page, one image
-
-
-def test_extract_text_from_normal_pdf_does_not_call_ocr(blob_dir, monkeypatch):
-    calls: list[list] = []
-
-    def fake_ocr_images(images):
-        calls.append(images)
-        return [OCR_SENTINEL for _ in images]
-
-    import app.rag.ocr as ocr_module
-
-    monkeypatch.setattr(ocr_module, "ocr_images", fake_ocr_images)
-
-    _make_pdf(blob_dir, "normal.pdf", with_text=True)
-
-    text = extract_text("normal.pdf", "normal.pdf")
-    assert "Hello extract test" in text
-    assert calls == []
-
-
-def test_extract_text_scanned_pdf_with_ocr_disabled_returns_thin_text(blob_dir, monkeypatch):
     from app.config import settings
+    monkeypatch.setattr(settings, "ocr_enabled", True)
 
+    doc = fitz.open()
+    doc.new_page()
+    key = _write(blob_dir, "scan.pdf", doc.write())
+    doc.close()
+
+    monkeypatch.setattr(
+        pdf_oxide.PdfDocument, "extract_text_auto",
+        lambda self, page: OCR_SENTINEL, raising=True,
+    )
+    out = extract_text(key, "scan.pdf")
+    assert OCR_SENTINEL in out
+
+
+def test_extract_pdf_skips_ocr_when_disabled(blob_dir, monkeypatch):
+    """ocr_enabled=False → native extract_text only; extract_text_auto NOT called."""
+    import fitz
+    import pdf_oxide
+
+    from app.config import settings
     monkeypatch.setattr(settings, "ocr_enabled", False)
 
-    calls: list[list] = []
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "native only")
+    key = _write(blob_dir, "native.pdf", doc.write())
+    doc.close()
 
-    def fake_ocr_images(images):
-        calls.append(images)
-        return [OCR_SENTINEL for _ in images]
+    def _boom(self, page):
+        raise AssertionError("extract_text_auto must not be called when ocr_enabled=False")
 
-    import app.rag.ocr as ocr_module
+    monkeypatch.setattr(pdf_oxide.PdfDocument, "extract_text_auto", _boom, raising=True)
+    out = extract_text(key, "native.pdf")
+    assert "native only" in out
 
-    monkeypatch.setattr(ocr_module, "ocr_images", fake_ocr_images)
 
-    _make_pdf(blob_dir, "scanned.pdf", with_text=False)
+def test_open_pdf_oxide_repairs_malformed_pdf(blob_dir, monkeypatch):
+    """A PDF PDFOxide can't open is repaired via PyMuPDF, then opened."""
+    import fitz
+    import pdf_oxide
 
-    text = extract_text("scanned.pdf", "scanned.pdf")
-    assert text == ""  # no text layer at all, and OCR is disabled
-    assert calls == []
+    from app.rag.extract import _open_pdf_oxide
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "repair me")
+    data = doc.write()
+    doc.close()
+
+    real_from_bytes = pdf_oxide.PdfDocument.from_bytes
+    calls = {"n": 0}
+
+    def flaky_from_bytes(b):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("Invalid cross-reference table")
+        return real_from_bytes(b)
+
+    monkeypatch.setattr(
+        pdf_oxide.PdfDocument, "from_bytes", staticmethod(flaky_from_bytes), raising=True
+    )
+    pdoc = _open_pdf_oxide(data)
+    assert calls["n"] == 2  # first raised, repaired bytes opened on retry
+    assert "repair me" in pdoc.extract_text(0)
 
 
 def test_extract_text_from_docx(blob_dir):
