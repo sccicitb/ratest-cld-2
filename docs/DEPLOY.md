@@ -111,7 +111,7 @@ ONNX models. Provision once per deploy:
 
 ```powershell
 cd backend
-env -u VIRTUAL_ENV uv run python scripts/setup_ocr_models.py
+uv run python scripts/setup_ocr_models.py
 ```
 
 Air-gapped hosts (no outbound internet): run the above with `--manifest` on a
