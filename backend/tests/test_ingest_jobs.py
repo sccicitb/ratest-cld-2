@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base
 from app.models import KBFile, User
-from app.rag.ingest_jobs import IngestJobRegistry, reap_stranded
+from app.rag.ingest_jobs import IngestJob, IngestJobRegistry, reap_stranded
 
 
 @pytest.fixture()
@@ -96,6 +96,31 @@ def test_observe_yields_progress_then_terminates(engine_factory, tmp_path):
     events, still_registered = asyncio.run(_run())
     assert events and all(ev["type"] == "chunk_progress" for ev in events)
     assert still_registered is False  # evicted on completion
+
+
+def test_completion_does_not_evict_a_replacement_job(engine_factory, tmp_path):
+    """A duplicate spawn(file_id) overwrites the registry entry. When the FIRST
+    job's task later completes, its done-callback must not evict the still-running
+    replacement (and drop its GC anchor). Deterministic because create_task only
+    schedules — job1's task doesn't run until we await/yield to the loop."""
+    qdrant = QdrantClient(":memory:")
+
+    async def _run():
+        db = engine_factory()
+        file = _make_file(db, "doc.txt", tmp_path)
+        reg = IngestJobRegistry(
+            session_factory=engine_factory, client=qdrant, embedder=_FakeEmbedder(),
+            max_concurrent=2,
+        )
+        job1 = reg.spawn(file.id)
+        # Synchronously (before yielding to the loop) replace the registry entry,
+        # as a duplicate spawn would. job1's task hasn't run yet.
+        job2 = IngestJob(file.id)
+        reg._jobs[file.id] = job2
+        await job1.task            # job1 completes -> its done-callback fires
+        return reg._jobs.get(file.id) is job2
+
+    assert asyncio.run(_run()) is True   # replacement NOT evicted by job1's completion
 
 
 def test_reap_stranded_marks_indexing_error(engine_factory):

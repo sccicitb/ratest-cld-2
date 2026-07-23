@@ -56,8 +56,15 @@ class IngestJobRegistry:
         job = IngestJob(file_id)
         job.task = asyncio.create_task(self._run(job))
         self._jobs[file_id] = job
-        # The dict entry is the GC anchor; evict when the task finishes.
-        job.task.add_done_callback(lambda _t, fid=file_id: self._jobs.pop(fid, None))
+        # The dict entry is the GC anchor; evict when the task finishes, but only
+        # if the entry still points at THIS job. A later spawn(file_id) for the
+        # same file replaces the entry with a new job; this job's completion
+        # must not evict that still-running replacement.
+        job.task.add_done_callback(
+            lambda _t, fid=file_id, this=job: (
+                self._jobs.pop(fid, None) if self._jobs.get(fid) is this else None
+            )
+        )
         return job
 
     async def _run(self, job: IngestJob) -> None:
