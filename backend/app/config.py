@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     # Optional override for the PDFOxide model cache (PDF_OXIDE_MODEL_DIR).
     pdf_oxide_model_dir: str | None = None
 
+    # --- Ingest jobs: max concurrent detached ingest tasks (one embedder/Qdrant) ---
+    max_concurrent_ingests: int = 2
+
     # --- Admin bootstrap (§M1) ---
     admin_email: str | None = None
     admin_password: str | None = None
