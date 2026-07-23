@@ -30,8 +30,9 @@ def ensure_ort_dylib() -> str | None:
     hits = glob.glob(f"{root}/**/*onnxruntime*.{ext}*", recursive=True)
     if not hits:
         return None
-    os.environ["ORT_DYLIB_PATH"] = hits[0]
-    return hits[0]
+    picked = sorted(hits)[0]
+    os.environ["ORT_DYLIB_PATH"] = picked
+    return picked
 
 
 def prefetch_ocr_models(languages: list[str]) -> str:

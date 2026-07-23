@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Provision PDFOxide's PaddleOCR-ONNX models (~21 MB). Run once per deploy.
 
-    env -u VIRTUAL_ENV uv run python scripts/setup_ocr_models.py
+    uv run python scripts/setup_ocr_models.py
 
 Languages come from settings.ocr_languages. For air-gapped hosts, print the
 manifest instead and place files manually into PDF_OXIDE_MODEL_DIR:
