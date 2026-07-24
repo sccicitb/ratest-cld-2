@@ -34,9 +34,11 @@ def _open_pdf_oxide(data: bytes):
     except Exception:
         import fitz
 
-        clean = fitz.open(stream=data, filetype="pdf").tobytes(
-            garbage=4, clean=True, deflate=True
-        )
+        # Close the PyMuPDF handle promptly — it holds C-level resources; don't
+        # wait for GC. (PDFOxide's PdfDocument is a Rust object; the caller
+        # scopes it with `with`.)
+        with fitz.open(stream=data, filetype="pdf") as fdoc:
+            clean = fdoc.tobytes(garbage=4, clean=True, deflate=True)
         return pdf_oxide.PdfDocument.from_bytes(clean)
 
 
@@ -44,11 +46,12 @@ def _extract_pdf(storage_key: str) -> str:
     with open_blob(storage_key) as f:
         data = f.read()
 
-    doc = _open_pdf_oxide(data)
-    # extract_text_auto: native text, transparently OCRing scanned pages.
-    # extract_text: native only (used when OCR is disabled).
-    read = doc.extract_text_auto if settings.ocr_enabled else doc.extract_text
-    return "\n".join(read(pg) for pg in range(doc.page_count()))
+    # `with` releases the PdfDocument's native resources at end of extraction.
+    with _open_pdf_oxide(data) as doc:
+        # extract_text_auto: native text, transparently OCRing scanned pages.
+        # extract_text: native only (used when OCR is disabled).
+        read = doc.extract_text_auto if settings.ocr_enabled else doc.extract_text
+        return "\n".join(read(pg) for pg in range(doc.page_count()))
 
 
 def _extract_docx(storage_key: str) -> str:
