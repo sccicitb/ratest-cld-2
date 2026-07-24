@@ -29,6 +29,10 @@ def token(content: str) -> dict:
     return {"type": "token", "content": content}
 
 
+def reasoning(content: str) -> dict:
+    return {"type": "reasoning", "content": content}
+
+
 def done(message_id: str) -> dict:
     return {"type": "done", "messageId": message_id}
 

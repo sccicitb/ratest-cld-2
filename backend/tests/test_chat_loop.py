@@ -308,3 +308,25 @@ def test_run_turn_emits_error_event_on_exception(session_factory):
     )
     assert events[-1]["type"] == "error"
     assert "model exploded" in events[-1]["message"]
+
+
+def test_run_turn_yields_reasoning_before_final_token(session_factory):
+    db, session = _make_session(session_factory)
+    model = _FakeModelClient([[
+        ModelChunk(type="reasoning", text="Let me think."),
+        ModelChunk(type="text", text="Final answer."),
+    ]])
+    registry = _registry()
+    ctx = _ctx(db, session)
+
+    events = asyncio.run(_collect(run_turn(
+        db=db, session=session, message="q",
+        registry=registry, model=model, ctx=ctx,
+    )))
+
+    reasoning_events = [e for e in events if e["type"] == "reasoning"]
+    assert reasoning_events == [{"type": "reasoning", "content": "Let me think."}]
+    token_events = [e for e in events if e["type"] == "token"]
+    assert "".join(e["content"] for e in token_events) == "Final answer."
+    # reasoning arrives before the final answer token
+    assert events.index(reasoning_events[0]) < events.index(token_events[0])

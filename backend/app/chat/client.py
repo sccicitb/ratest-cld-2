@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 class ModelChunk:
     """A normalized piece of a model turn: either a text delta or a completed tool call."""
 
-    type: Literal["text", "tool_call"]
+    type: Literal["text", "tool_call", "reasoning"]
     text: str | None = None
     id: str | None = None
     name: str | None = None
@@ -65,14 +65,17 @@ class OpenAIModelClient:
 
         pending: dict[int, _PendingToolCall] = {}
 
-        print(kwargs)
-        print("-----------------")
         response = await self._client.chat.completions.create(**kwargs)
-        print(response)
         async for chunk in response:
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta
+
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning is None:
+                reasoning = (getattr(delta, "model_extra", None) or {}).get("reasoning_content")
+            if reasoning:
+                yield ModelChunk(type="reasoning", text=reasoning)
 
             if delta.content:
                 yield ModelChunk(type="text", text=delta.content)
