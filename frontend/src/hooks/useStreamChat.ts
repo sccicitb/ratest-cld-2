@@ -23,6 +23,7 @@ export function useStreamChat(sessionId: string) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [steps, setSteps] = useState<StepState[]>([]);
   const [streamedContent, setStreamedContent] = useState("");
+  const [streamedReasoning, setStreamedReasoning] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [currentArtifact, setCurrentArtifact] = useState<ArtifactSummary | null>(null);
   const abortRef = useRef(false);
@@ -30,6 +31,7 @@ export function useStreamChat(sessionId: string) {
   const reset = useCallback(() => {
     setSteps([]);
     setStreamedContent("");
+    setStreamedReasoning("");
     setError(null);
     setCurrentArtifact(null);
   }, []);
@@ -75,6 +77,9 @@ export function useStreamChat(sessionId: string) {
             case "token":
               setStreamedContent((prev) => prev + event.content);
               break;
+            case "reasoning":
+              setStreamedReasoning((prev) => prev + event.content);
+              break;
             case "error":
               setError(event.message);
               break;
@@ -109,6 +114,7 @@ export function useStreamChat(sessionId: string) {
     isStreaming,
     steps,
     streamedContent,
+    streamedReasoning,
     error,
     currentArtifact,
     abort,
