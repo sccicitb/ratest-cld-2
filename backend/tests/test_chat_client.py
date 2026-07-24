@@ -13,6 +13,15 @@ class _Delta:
         self.tool_calls = tool_calls or []
 
 
+class _DeltaExtraOnly:
+    """Delta with reasoning_content only in model_extra dict, not as attribute."""
+    def __init__(self, reasoning):
+        self.content = None
+        self.tool_calls = []
+        self.model_extra = {"reasoning_content": reasoning}
+        # deliberately NO reasoning_content attribute
+
+
 class _Choice:
     def __init__(self, delta):
         self.delta = delta
@@ -61,5 +70,25 @@ def test_stream_yields_reasoning_then_text():
     chunks = asyncio.run(_run())
     assert chunks == [
         ModelChunk(type="reasoning", text="thinking hard"),
+        ModelChunk(type="text", text="the answer"),
+    ]
+
+
+def test_stream_yields_reasoning_from_model_extra_fallback():
+    """Test reasoning_content is captured when only in model_extra dict."""
+    client = OpenAIModelClient()
+    client._client = _FakeAsyncClient([
+        _Chunk(_DeltaExtraOnly("via extra")),
+        _Chunk(_Delta(content="the answer")),
+    ])
+
+    async def _run():
+        return [c async for c in client.stream(
+            messages=[{"role": "user", "content": "q"}], tools=[]
+        )]
+
+    chunks = asyncio.run(_run())
+    assert chunks == [
+        ModelChunk(type="reasoning", text="via extra"),
         ModelChunk(type="text", text="the answer"),
     ]

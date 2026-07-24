@@ -24,6 +24,8 @@ export function ThoughtsPanel({
         type="button"
         onClick={() => setExpanded((e) => !e)}
         className="flex w-full items-center gap-2 px-3 py-2 text-muted-foreground"
+        aria-expanded={expanded}
+        aria-controls="thoughts-body"
       >
         <Brain className="h-4 w-4" />
         <span className="font-medium">Thoughts</span>
@@ -32,7 +34,10 @@ export function ThoughtsPanel({
         />
       </button>
       {expanded && (
-        <div className="whitespace-pre-wrap px-3 pb-3 font-mono text-xs text-muted-foreground">
+        <div
+          id="thoughts-body"
+          className="whitespace-pre-wrap px-3 pb-3 font-mono text-xs text-muted-foreground"
+        >
           {reasoning}
         </div>
       )}
