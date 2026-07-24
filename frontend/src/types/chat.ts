@@ -60,6 +60,11 @@ export interface TokenEvent {
   content: string;
 }
 
+export interface ReasoningEvent {
+  type: "reasoning";
+  content: string;
+}
+
 export interface ChunkProgressEvent {
   type: "chunk_progress";
   fileName: string;
@@ -88,6 +93,7 @@ export interface ArtifactEvent {
 export type StreamEvent =
   | StepEvent
   | TokenEvent
+  | ReasoningEvent
   | ChunkProgressEvent
   | DoneEvent
   | ErrorEvent

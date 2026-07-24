@@ -6,6 +6,7 @@ import { Database, FileCode, Loader2 } from "lucide-react";
 
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { StepTracker } from "@/components/chat/StepTracker";
+import { ThoughtsPanel } from "@/components/chat/ThoughtsPanel";
 import { InputBar } from "@/components/chat/InputBar";
 import { SourcesDrawer } from "@/components/chat/SourcesDrawer";
 import { ChunkingProgress } from "@/components/chat/ChunkingProgress";
@@ -24,8 +25,16 @@ export default function ChatRoute() {
   const { sessionId = "" } = useParams();
   const { data: session } = useSession(sessionId);
   const { data: messages, isLoading } = useMessages(sessionId);
-  const { sendMessage, isStreaming, steps, streamedContent, currentArtifact, reset, abort } =
-    useStreamChat(sessionId);
+  const {
+    sendMessage,
+    isStreaming,
+    steps,
+    streamedContent,
+    streamedReasoning,
+    currentArtifact,
+    reset,
+    abort,
+  } = useStreamChat(sessionId);
   const { upload, tasks: ingestTasks } = useSessionIngestion(sessionId);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
@@ -38,7 +47,11 @@ export default function ChatRoute() {
   const autoOpenFiredRef = useRef(false);
 
   const { scrollRef, scrollToBottom } = useAutoScroll(
-    `${messages?.length}-${streamedContent.length}-${steps.length}-${ingestTasks.length}`,
+    `${messages?.length}-${streamedContent.length}-${streamedReasoning.length}-${steps.length}-${ingestTasks.length}`,
+  );
+
+  const thinkingActive = steps.some(
+    (s) => s.step === "thinking" && s.status === "active",
   );
 
   // Reset transient streaming UI when switching sessions.
@@ -185,6 +198,9 @@ export default function ChatRoute() {
 
           {isStreaming && steps.length > 0 && (
             <StepTracker steps={steps} active={isStreaming} />
+          )}
+          {isStreaming && (
+            <ThoughtsPanel reasoning={streamedReasoning} active={thinkingActive} />
           )}
 
           {isStreaming && streamedContent && (

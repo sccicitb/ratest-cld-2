@@ -29,7 +29,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
 from app.chat.client import ModelChunk, ModelClient
-from app.chat.events import artifact, done, error, step, token
+from app.chat.events import artifact, done, error, reasoning, step, token
 from app.config import settings
 from app.models import ArtifactVersion, Attachment, ChatSession, Message
 from app.storage import open_blob
@@ -220,6 +220,8 @@ async def run_turn(
             async for chunk in model.stream(messages, tools):
                 if chunk.type == "text":
                     text_parts.append(chunk.text or "")
+                elif chunk.type == "reasoning":
+                    yield reasoning(chunk.text or "")
                 elif chunk.type == "tool_call":
                     tool_calls.append(chunk)
 
