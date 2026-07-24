@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base
 from app.models import KBFile, User
+import app.rag.ingest as ingest_module
 from app.rag.embedder import Embedder, get_embedder
 from app.rag.ingest import ingest
 from app.rag.vectors import search
@@ -241,3 +242,39 @@ def test_ingest_marks_error_on_pdf_extraction_failure(db_session, qdrant: Qdrant
     db_session.refresh(file)
     assert file.status == "error", f"Expected status='error', got '{file.status}'"
     assert file.chunk_count == 0
+
+
+def test_ingest_runs_cpu_work_off_the_event_loop_thread(
+    db_session, qdrant: QdrantClient, tmp_path, monkeypatch
+):
+    """extract_text and upsert_chunks are CPU/GPU-bound; they must run on a
+    worker thread, not the event-loop (main) thread, so a long ingest doesn't
+    stall the worker. Record the thread each runs on and assert it isn't main.
+    """
+    import threading
+
+    storage_key = "doc.txt"
+    (tmp_path / storage_key).write_text("Hello world. " * 200, encoding="utf-8")
+    user = _make_user(db_session)
+    file = _make_kb_file(db_session, user.id, storage_key, "doc.txt")
+
+    main = threading.main_thread()
+    seen: dict[str, threading.Thread] = {}
+    real_extract = ingest_module.extract_text
+    real_upsert = ingest_module.upsert_chunks
+
+    def _rec_extract(*a, **kw):
+        seen["extract"] = threading.current_thread()
+        return real_extract(*a, **kw)
+
+    def _rec_upsert(*a, **kw):
+        seen["upsert"] = threading.current_thread()
+        return real_upsert(*a, **kw)
+
+    monkeypatch.setattr(ingest_module, "extract_text", _rec_extract)
+    monkeypatch.setattr(ingest_module, "upsert_chunks", _rec_upsert)
+
+    asyncio.run(_collect(ingest(db_session, file.id, client=qdrant, embedder=_FakeEmbedder())))
+
+    assert seen.get("extract") is not None and seen["extract"] is not main
+    assert seen.get("upsert") is not None and seen["upsert"] is not main

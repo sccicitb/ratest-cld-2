@@ -7,7 +7,9 @@ so callers/tests can swap in an in-memory client / fake embedder.
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from qdrant_client import QdrantClient
@@ -20,6 +22,13 @@ from app.rag.vectors import Chunk, ensure_collection, upsert_chunks
 from app.storage import open_blob
 
 _EMBED_BATCH = 16
+
+# Single worker: serializes the CPU/GPU-bound ingest work (PDFOxide/PaddleOCR
+# extraction, BGE-M3 embedding) — correct on one box, and sidesteps the unproven
+# thread-safety of the shared OCR engine / embedder under concurrent calls —
+# while keeping it OFF the event loop so a long ingest doesn't stall the worker.
+# Process-lived; Python's atexit reaps it on shutdown.
+_CPU_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ingest-cpu")
 
 
 async def ingest(
@@ -47,9 +56,12 @@ async def ingest(
     with open_blob(file.storage_key):
         pass
 
+    loop = asyncio.get_running_loop()
     finalized = False
     try:
-        text = extract_text(file.storage_key, file.name)
+        text = await loop.run_in_executor(
+            _CPU_EXECUTOR, extract_text, file.storage_key, file.name
+        )
         pieces = chunk_text(text)
 
         total = len(pieces)
@@ -90,7 +102,7 @@ async def ingest(
         done = 0
         for start in range(0, total, _EMBED_BATCH):
             batch = chunks[start : start + _EMBED_BATCH]
-            upsert_chunks(client, embedder, batch)
+            await loop.run_in_executor(_CPU_EXECUTOR, upsert_chunks, client, embedder, batch)
             done += len(batch)
             yield {
                 "type": "chunk_progress",
