@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
@@ -19,6 +19,7 @@ from app.models import Group, User
 from app.rag.embedder import Embedder, get_embedder
 from app.rag.extract import SUPPORTED_KB_TYPES
 from app.rag.ingest import ingest
+from app.rag.ingest_jobs import IngestJobRegistry
 from app.rag.vectors import delete_by_file, get_client
 from app.schemas import KnowledgeBaseFileOut
 from app.sse import sse
@@ -40,9 +41,14 @@ def get_embedder_dep() -> Embedder:
     return get_embedder()
 
 
+def get_ingest_jobs(request: Request) -> IngestJobRegistry:
+    return request.app.state.ingest_jobs
+
+
 QdrantDep = Annotated[QdrantClient, Depends(get_qdrant)]
 EmbedderDep = Annotated[Embedder, Depends(get_embedder_dep)]
 SessionFactoryDep = Annotated[object, Depends(get_session_factory)]
+IngestJobsDep = Annotated[IngestJobRegistry, Depends(get_ingest_jobs)]
 
 
 class UpdateTagsRequest(BaseModel):
@@ -129,8 +135,7 @@ def _resolve_kb_filing(
 async def upload_file(
     user: CurrentUser,
     db: DbSession,
-    client: QdrantDep,
-    embedder: EmbedderDep,
+    ingest_jobs: IngestJobsDep,
     file: UploadFile,
     group_id: Annotated[str | None, Form()] = None,
     is_public: Annotated[bool, Form()] = False,
@@ -162,16 +167,16 @@ async def upload_file(
         tags=resolved_tags,
     )
     file_id = kb_file.id
+    ingest_jobs.spawn(file_id)
 
     async def _stream():
-        try:
-            async for event in ingest(db, file_id, client=client, embedder=embedder):
-                yield sse(event)
-        except Exception as exc:
-            yield sse({"type": "error", "message": str(exc)})
-            return
-
+        async for event in ingest_jobs.observe(file_id):
+            yield sse(event)
+        # Task finished (or was never observed). Re-read the file for its terminal state.
         db.refresh(kb_file)
+        if kb_file.status == "error":
+            yield sse({"type": "error", "message": "Ingestion failed"})
+            return
         out = KnowledgeBaseFileOut.model_validate(kb_file)
         yield sse({"type": "file_resolved", "file": out.model_dump(mode="json", by_alias=True)})
         yield sse({"type": "done"})

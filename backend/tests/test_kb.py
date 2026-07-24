@@ -19,9 +19,10 @@ from qdrant_client import QdrantClient
 from qdrant_client import models as qm
 
 from app.db import get_session_factory
-from app.kb.routes import get_embedder_dep, get_qdrant
+from app.kb.routes import get_embedder_dep, get_ingest_jobs, get_qdrant
 from app.main import app
 from app.models import Group, user_groups
+from app.rag.ingest_jobs import IngestJobRegistry
 from app.rag.vectors import COLLECTION, ensure_collection
 
 
@@ -48,10 +49,16 @@ def _override_kb_deps(qdrant_memory, session_factory):
     app.dependency_overrides[get_qdrant] = lambda: qdrant_memory
     app.dependency_overrides[get_embedder_dep] = lambda: _FakeEmbedder()
     app.dependency_overrides[get_session_factory] = lambda: session_factory
+    _test_registry = IngestJobRegistry(
+        session_factory=session_factory, client=qdrant_memory,
+        embedder=_FakeEmbedder(), max_concurrent=2,
+    )
+    app.dependency_overrides[get_ingest_jobs] = lambda: _test_registry
     yield
     app.dependency_overrides.pop(get_qdrant, None)
     app.dependency_overrides.pop(get_embedder_dep, None)
     app.dependency_overrides.pop(get_session_factory, None)
+    app.dependency_overrides.pop(get_ingest_jobs, None)
 
 
 @pytest.fixture()
