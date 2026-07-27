@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     # --- Ingest jobs: max concurrent detached ingest tasks (one embedder/Qdrant) ---
     max_concurrent_ingests: int = 2
 
+    # Max concurrent detached chat turns (I/O-bound on the model; generous).
+    max_concurrent_chat_turns: int = 16
+
     # --- Admin bootstrap (§M1) ---
     admin_email: str | None = None
     admin_password: str | None = None
