@@ -55,6 +55,12 @@ export function useStreamChat(sessionId: string) {
           if (abortRef.current) break;
           switch (event.type) {
             case "step": {
+              // A tool call starting means the model's interim "thinking out
+              // loud" text is suppressed server-side — clear the live bubble so
+              // only the final answer streams in (matches what gets persisted).
+              if (event.step === "calling_tool" && event.status === "active") {
+                setStreamedContent("");
+              }
               // Steps with an id (repeatable tool calls) are keyed by id;
               // single-occurrence pipeline steps are keyed by their name.
               const key = event.id ?? event.step;

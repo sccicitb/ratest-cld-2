@@ -220,6 +220,11 @@ async def run_turn(
             async for chunk in model.stream(messages, tools):
                 if chunk.type == "text":
                     text_parts.append(chunk.text or "")
+                    # Stream the answer live (time-to-first-token). Interim text
+                    # on tool-calling turns is cleared client-side on tool-start;
+                    # only the final turn's text is persisted (see below).
+                    if chunk.text:
+                        yield token(chunk.text)
                 elif chunk.type == "reasoning":
                     yield reasoning(chunk.text or "")
                 elif chunk.type == "tool_call":
@@ -233,10 +238,8 @@ async def run_turn(
                 # is ignored here; we already have nothing else to act on).
                 yield step("thinking", "complete")
                 yield step("generating_response", "active")
-                full_text = "".join(text_parts)
-                if full_text:
-                    yield token(full_text)
-                final_text_parts.append(full_text)
+                # Text already streamed live above; just record it for persistence.
+                final_text_parts.append("".join(text_parts))
                 yield step("generating_response", "complete")
                 break
 

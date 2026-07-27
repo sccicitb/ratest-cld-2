@@ -169,6 +169,34 @@ def test_run_turn_zero_tool_calls_streams_tokens_and_persists(session_factory):
     assert session.title == "hi, how are you?"
 
 
+def test_run_turn_streams_answer_tokens_incrementally(session_factory):
+    """The answer must stream as multiple token events (one per chunk), not be
+    buffered into a single event — so the client sees text from the first token.
+    Persistence is unchanged: the saved message is still the full answer.
+    """
+    db, session = _make_session(session_factory)
+    model = _FakeModelClient([[
+        ModelChunk(type="text", text="Hello "),
+        ModelChunk(type="text", text="there!"),
+    ]])
+    registry = _registry()
+    ctx = _ctx(db, session)
+
+    events = asyncio.run(_collect(run_turn(
+        db=db, session=session, message="hi",
+        registry=registry, model=model, ctx=ctx,
+    )))
+
+    token_events = [e for e in events if e["type"] == "token"]
+    assert len(token_events) >= 2, f"answer was not streamed incrementally: {token_events}"
+    assert [e["content"] for e in token_events] == ["Hello ", "there!"]
+    assert "".join(e["content"] for e in token_events) == "Hello there!"
+
+    messages = db.query(Message).filter_by(session_id=session.id).order_by(Message.created_at).all()
+    assert messages[-1].role == "assistant"
+    assert messages[-1].content == "Hello there!"  # persisted answer unchanged
+
+
 def test_run_turn_auto_titles_long_first_message(session_factory):
     db, session = _make_session(session_factory)
     long_message = "a" * 60
