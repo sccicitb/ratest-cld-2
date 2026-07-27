@@ -344,7 +344,15 @@ def test_stream_replays_live_turn_and_empty_when_idle(session_factory):
             stream_task = asyncio.create_task(
                 ac.get(f"/api/sessions/{sid}/stream", headers=headers)
             )
-            await asyncio.sleep(0.05)  # let stream_task attach and observe from index 0
+            # Wait until BOTH observers (the POST sender + this GET resumer) are
+            # attached and tailing — condition-based, not a fixed sleep — so
+            # releasing the gate can't let the turn complete and evict before the
+            # resumer has observed "early".
+            for _ in range(600):  # ~3s bound
+                if registry.observer_count(sid) >= 2:
+                    break
+                await asyncio.sleep(0.005)
+            assert registry.observer_count(sid) >= 2, "resume observer never attached"
 
             gate.set()
             r1 = await asyncio.wait_for(turn_task, timeout=8)

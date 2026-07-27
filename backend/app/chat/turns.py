@@ -43,6 +43,7 @@ class ChatTurnJob:
         self.events: list[dict] = []
         self.done = False
         self.task: asyncio.Task | None = None
+        self.observers = 0  # count of live observe() streams (sender + resumers)
         self._wakeup = asyncio.Event()
 
     def _wake(self) -> None:
@@ -129,18 +130,26 @@ class ChatTurnRegistry:
         job = self._jobs.get(session_id)
         if job is None:  # no live turn (never started, or already finished+evicted)
             return
-        i = from_index
-        while True:
-            wakeup = job._wakeup      # capture BEFORE draining (avoids lost wakeups)
-            while i < len(job.events):
-                yield job.events[i]
-                i += 1
-            if job.done:
-                return
-            await wakeup.wait()
+        job.observers += 1
+        try:
+            i = from_index
+            while True:
+                wakeup = job._wakeup      # capture BEFORE draining (avoids lost wakeups)
+                while i < len(job.events):
+                    yield job.events[i]
+                    i += 1
+                if job.done:
+                    return
+                await wakeup.wait()
+        finally:
+            job.observers -= 1
 
     def has_active(self, session_id: str) -> bool:
         return session_id in self._jobs
+
+    def observer_count(self, session_id: str) -> int:
+        job = self._jobs.get(session_id)
+        return job.observers if job else 0
 
     def active_session_ids(self) -> set[str]:
         return set(self._jobs.keys())
