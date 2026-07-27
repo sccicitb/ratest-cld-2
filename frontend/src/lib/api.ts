@@ -136,6 +136,29 @@ export async function* streamChat(
   yield* sseLines(res.body) as AsyncGenerator<StreamEvent>;
 }
 
+/**
+ * Reattach to a live turn (or replay+tail one that just finished) after
+ * navigating away and back. Empty stream if no turn is in flight.
+ */
+export async function* streamResume(
+  sessionId: string,
+): AsyncGenerator<StreamEvent> {
+  const res = await fetch(PREFIX(`/api/sessions/${sessionId}/stream`), {
+    method: "GET",
+    credentials: "include",
+    headers: {
+      Accept: "text/event-stream",
+      ...authHeaders(),
+    },
+  });
+  if (!res.ok || !res.body) {
+    let info: { message?: string; code?: string } = {};
+    try { info = await res.json(); } catch { /* pre-stream error */ }
+    throw new ApiError(res.status, info.message || "Resume failed", info.code);
+  }
+  yield* sseLines(res.body) as AsyncGenerator<StreamEvent>;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Knowledge base                                                     */
 /* ------------------------------------------------------------------ */

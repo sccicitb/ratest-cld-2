@@ -5,6 +5,7 @@ export interface Session {
   title: string;
   createdAt: string;
   updatedAt: string;
+  activeTurn: boolean;
 }
 
 export type MessageRole = "user" | "assistant" | "system";

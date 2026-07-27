@@ -1,13 +1,14 @@
 import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { streamChat } from "@/lib/api";
+import { ApiError, streamChat, streamResume } from "@/lib/api";
 import { queryKeys } from "@/lib/queries";
 import type {
   ArtifactSummary,
   Attachment,
   PipelineStep,
   StepStatus,
+  StreamEvent,
 } from "@/types/chat";
 
 export interface StepState {
@@ -41,17 +42,10 @@ export function useStreamChat(sessionId: string) {
     setIsStreaming(false);
   }, []);
 
-  const sendMessage = useCallback(
-    async (message: string, attachments?: Attachment[]) => {
-      reset();
-      abortRef.current = false;
-      setIsStreaming(true);
-
-      // Reflect the new user message immediately.
-      qc.invalidateQueries({ queryKey: queryKeys.messages(sessionId) });
-
+  const consumeStream = useCallback(
+    async (events: AsyncIterable<StreamEvent>) => {
       try {
-        for await (const event of streamChat(sessionId, message, attachments)) {
+        for await (const event of events) {
           if (abortRef.current) break;
           switch (event.type) {
             case "step": {
@@ -104,7 +98,16 @@ export function useStreamChat(sessionId: string) {
           }
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Streaming failed");
+        // 409 means a turn is already running for this room (e.g. it was
+        // started elsewhere, or resume() and sendMessage() raced). That's
+        // not a failure — the `activeTurn` poll + resume-on-entry effect
+        // will reattach to the real turn, so stay quiet rather than
+        // surfacing a scary error.
+        if (err instanceof ApiError && err.status === 409) {
+          // no-op
+        } else {
+          setError(err instanceof Error ? err.message : "Streaming failed");
+        }
       } finally {
         setIsStreaming(false);
         // Refresh persisted messages and session ordering/title.
@@ -112,11 +115,37 @@ export function useStreamChat(sessionId: string) {
         qc.invalidateQueries({ queryKey: queryKeys.sessions });
       }
     },
-    [sessionId, qc, reset],
+    [sessionId, qc],
   );
+
+  const sendMessage = useCallback(
+    async (message: string, attachments?: Attachment[]) => {
+      reset();
+      abortRef.current = false;
+      setIsStreaming(true);
+
+      // Reflect the new user message immediately.
+      qc.invalidateQueries({ queryKey: queryKeys.messages(sessionId) });
+
+      await consumeStream(streamChat(sessionId, message, attachments));
+    },
+    [sessionId, qc, reset, consumeStream],
+  );
+
+  // Reattach to a turn that's still running (or replay+tail one that just
+  // finished) after navigating away and back. Guards against double-consume
+  // if a stream is already being read.
+  const resume = useCallback(async () => {
+    if (isStreaming) return;
+    reset();
+    abortRef.current = false;
+    setIsStreaming(true);
+    await consumeStream(streamResume(sessionId));
+  }, [sessionId, isStreaming, reset, consumeStream]);
 
   return {
     sendMessage,
+    resume,
     isStreaming,
     steps,
     streamedContent,

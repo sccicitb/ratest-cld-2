@@ -201,11 +201,24 @@ export function Sidebar() {
                             <Link
                               to={`/chat/${session.id}`}
                               className={cn(
-                                "block truncate rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-sidebar-accent",
+                                "flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-sidebar-accent",
                                 isActive && "bg-sidebar-accent font-medium",
                               )}
                             >
-                              {session.title}
+                              <span className="min-w-0 truncate">{session.title}</span>
+                              {session.activeTurn && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span
+                                      className="size-1.5 shrink-0 animate-pulse rounded-full bg-brand-red"
+                                      aria-label="Generating"
+                                    />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="right">
+                                    Generating…
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
                             </Link>
                           </ContextMenuTrigger>
                           <ContextMenuContent>

@@ -17,16 +17,18 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useStreamChat } from "@/hooks/useStreamChat";
 import { useSessionIngestion } from "@/hooks/useSessionIngestion";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
-import { useMessages, useSession } from "@/lib/queries";
+import { useMessages, useSession, useSessions } from "@/lib/queries";
 import * as api from "@/lib/api";
 import type { ArtifactSummary, Attachment } from "@/types/chat";
 
 export default function ChatRoute() {
   const { sessionId = "" } = useParams();
   const { data: session } = useSession(sessionId);
+  const { data: sessions } = useSessions();
   const { data: messages, isLoading } = useMessages(sessionId);
   const {
     sendMessage,
+    resume,
     isStreaming,
     steps,
     streamedContent,
@@ -35,6 +37,10 @@ export default function ChatRoute() {
     reset,
     abort,
   } = useStreamChat(sessionId);
+
+  // `GET /sessions` (list) is the source of truth for `activeTurn` — the
+  // single-session fetch doesn't stamp it (backend §Task2/3).
+  const activeTurn = sessions?.find((s) => s.id === sessionId)?.activeTurn ?? false;
   const { upload, tasks: ingestTasks } = useSessionIngestion(sessionId);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
@@ -62,6 +68,15 @@ export default function ChatRoute() {
     setCanvasOpen(false);
     autoOpenFiredRef.current = false;
   }, [sessionId, reset]);
+
+  // Reattach to a turn that's still running (e.g. we navigated away mid-turn
+  // and came back, or reloaded) — `resume()` itself no-ops if we're already
+  // streaming, so this is safe to fire on every activeTurn flip.
+  useEffect(() => {
+    if (!sessionId || !activeTurn) return;
+    void resume();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, activeTurn]);
 
   // Load artifacts on mount / session change (reload).
   useEffect(() => {
@@ -227,6 +242,7 @@ export default function ChatRoute() {
           onSend={handleSend}
           isStreaming={isStreaming}
           onAbort={abort}
+          locked={activeTurn && !isStreaming}
         />
       </div>
 
