@@ -53,6 +53,42 @@ def client(session_factory):
     app.dependency_overrides.clear()
 
 
+@pytest.fixture(autouse=True)
+def _chat_turns_override(session_factory):
+    """Route chat turns through a per-test ChatTurnRegistry instead of the real
+    one that lifespan builds (which uses the live model client).
+
+    The registry's model is derived from whatever `get_model_client` the test
+    wired via `app.dependency_overrides` (the pre-existing seam most chat-flow
+    tests use) — else a no-op model. Tests that need a specific registry can
+    override `get_chat_turns` directly and that wins. This keeps every chat/
+    session route on a test registry, sharing the test's `session_factory` so
+    the detached turn's own DB session sees the same in-memory data.
+    """
+    from app.chat.routes import get_chat_turns, get_model_client
+    from app.chat.turns import ChatTurnRegistry
+
+    class _NoModel:
+        async def stream(self, messages, tools):  # empty async generator
+            if False:
+                yield
+
+    def _factory():
+        provider = app.dependency_overrides.get(get_model_client)
+        model = provider() if provider else _NoModel()
+        return ChatTurnRegistry(
+            model=model,
+            client=None,
+            embedder=None,
+            session_factory=session_factory,
+            max_concurrent=4,
+        )
+
+    app.dependency_overrides[get_chat_turns] = _factory
+    yield
+    app.dependency_overrides.pop(get_chat_turns, None)
+
+
 @pytest.fixture()
 def demo_user(session_factory) -> dict:
     db = session_factory()
