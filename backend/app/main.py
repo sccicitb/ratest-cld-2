@@ -101,7 +101,10 @@ async def lifespan(app: FastAPI):
             "native text (no crash). Install onnxruntime / set ORT_DYLIB_PATH."
         )
 
-    # Ingest-job registry (detached, disconnect-surviving KB ingest) + reaper.
+    # Ingest-job + chat-turn registries (detached, disconnect-surviving
+    # background work) + the ingest reaper.
+    from app.chat.client import get_model_client
+    from app.chat.turns import ChatTurnRegistry
     from app.db import SessionLocal, get_session_factory
     from app.rag.embedder import get_embedder
     from app.rag.ingest_jobs import IngestJobRegistry, reap_stranded
@@ -112,6 +115,16 @@ async def lifespan(app: FastAPI):
         client=get_client(),
         embedder=get_embedder(),
         max_concurrent=settings.max_concurrent_ingests,
+    )
+
+    # Chat-turn registry (detached, disconnect-surviving chat turns) — see
+    # app/chat/turns.py for the replay/resume design.
+    app.state.chat_turns = ChatTurnRegistry(
+        model=get_model_client(),
+        client=get_client(),
+        embedder=get_embedder(),
+        session_factory=get_session_factory(),
+        max_concurrent=settings.max_concurrent_chat_turns,
     )
     try:
         _rdb = SessionLocal()
@@ -127,6 +140,7 @@ async def lifespan(app: FastAPI):
     yield
 
     await app.state.ingest_jobs.shutdown()
+    await app.state.chat_turns.shutdown()
 
 
 def _bootstrap_admin() -> None:

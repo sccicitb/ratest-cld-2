@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from qdrant_client import QdrantClient
 
-from app.chat.routes import get_qdrant
+from app.chat.routes import get_chat_turns, get_qdrant
 from app.main import app
 
 
@@ -59,6 +59,26 @@ def test_list_sorted_by_updated_desc(client, auth_headers):
     client.patch(f"/api/sessions/{a}", headers=auth_headers, json={"title": "bump"})
     ids = [s["id"] for s in client.get("/api/sessions", headers=auth_headers).json()]
     assert ids == [a, b]
+
+
+def test_list_sessions_includes_active_turn_flag(client, auth_headers):
+    """`GET /sessions` stamps `activeTurn` from the chat-turn registry (Task 2)."""
+    a = client.post("/api/sessions", headers=auth_headers).json()["id"]
+    b = client.post("/api/sessions", headers=auth_headers).json()["id"]
+
+    class _FakeRegistry:
+        def active_session_ids(self) -> set[str]:
+            return {a}
+
+    app.dependency_overrides[get_chat_turns] = lambda: _FakeRegistry()
+    try:
+        r = client.get("/api/sessions", headers=auth_headers)
+        assert r.status_code == 200
+        by_id = {s["id"]: s["activeTurn"] for s in r.json()}
+        assert by_id[a] is True
+        assert by_id[b] is False
+    finally:
+        app.dependency_overrides.pop(get_chat_turns, None)
 
 
 def test_cannot_access_another_users_session(client, auth_headers, session_factory):
