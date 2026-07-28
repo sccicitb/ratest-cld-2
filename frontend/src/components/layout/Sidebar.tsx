@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import {
   Database,
   Ear,
+  Loader2,
   MessageSquarePlus,
   PanelLeftClose,
   PanelLeftOpen,
@@ -205,12 +206,11 @@ export function Sidebar() {
                                 isActive && "bg-sidebar-accent font-medium",
                               )}
                             >
-                              <span className="min-w-0 truncate">{session.title}</span>
                               {session.activeTurn && (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
-                                    <span
-                                      className="ml-auto size-1.5 shrink-0 animate-pulse rounded-full bg-brand-red"
+                                    <Loader2
+                                      className="size-3.5 shrink-0 animate-spin text-brand-red"
                                       aria-label="Generating"
                                     />
                                   </TooltipTrigger>
@@ -219,6 +219,7 @@ export function Sidebar() {
                                   </TooltipContent>
                                 </Tooltip>
                               )}
+                              <span className="min-w-0 truncate">{session.title}</span>
                             </Link>
                           </ContextMenuTrigger>
                           <ContextMenuContent>
