@@ -67,9 +67,19 @@ export function useStreamChat(sessionId: string) {
 
   const consumeStream = useCallback(
     async (run: number, events: AsyncIterable<StreamEvent>) => {
+      let announced = false;
       try {
         for await (const event of events) {
           if (runIdRef.current !== run) break;
+          // The first event proves the turn is spawned and registered, so a
+          // refetch now observes `activeTurn: true` — which lights the
+          // sidebar dot and bootstraps the 2.5s poll that sustains it.
+          // Invalidating at send time would be too early: the stream
+          // generator is lazy, so the POST hasn't been issued yet.
+          if (!announced) {
+            announced = true;
+            qc.invalidateQueries({ queryKey: queryKeys.sessions });
+          }
           switch (event.type) {
             case "step": {
               // A tool call starting means the model's interim "thinking out
