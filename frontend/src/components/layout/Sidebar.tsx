@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import {
   Database,
   Ear,
+  Loader2,
   MessageSquarePlus,
   PanelLeftClose,
   PanelLeftOpen,
@@ -201,11 +202,24 @@ export function Sidebar() {
                             <Link
                               to={`/chat/${session.id}`}
                               className={cn(
-                                "block truncate rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-sidebar-accent",
+                                "flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-sidebar-accent",
                                 isActive && "bg-sidebar-accent font-medium",
                               )}
                             >
-                              {session.title}
+                              {session.activeTurn && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Loader2
+                                      className="size-3.5 shrink-0 animate-spin text-brand-red"
+                                      aria-label="Generating"
+                                    />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="right">
+                                    Generating…
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                              <span className="min-w-0 truncate">{session.title}</span>
                             </Link>
                           </ContextMenuTrigger>
                           <ContextMenuContent>

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends
 from qdrant_client import QdrantClient
 
 from app.auth.deps import CurrentUser, DbSession
+from app.chat.routes import ChatTurnsDep
 from app.config import settings
 from app.errors import ApiError
 from app.kb.routes import get_qdrant
@@ -34,13 +35,17 @@ def _owned(db: DbSession, user_id: str, session_id: str) -> ChatSession:
 
 
 @router.get("", response_model=list[SessionOut])
-def list_sessions(user: CurrentUser, db: DbSession) -> list[ChatSession]:
-    return (
+def list_sessions(user: CurrentUser, db: DbSession, chat_turns: ChatTurnsDep) -> list[ChatSession]:
+    sessions = (
         db.query(ChatSession)
         .filter(ChatSession.user_id == user.id)
         .order_by(ChatSession.updated_at.desc())
         .all()
     )
+    active = chat_turns.active_session_ids()
+    for s in sessions:
+        s.active_turn = s.id in active
+    return sessions
 
 
 @router.post("", response_model=SessionOut, status_code=201)

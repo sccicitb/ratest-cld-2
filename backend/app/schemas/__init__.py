@@ -57,6 +57,7 @@ class SessionOut(CamelModel):
     title: str
     created_at: datetime
     updated_at: datetime
+    active_turn: bool = False
 
 
 class RenameSessionRequest(CamelModel):

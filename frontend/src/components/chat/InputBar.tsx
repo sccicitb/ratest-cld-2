@@ -24,9 +24,16 @@ interface InputBarProps {
   onSend: (message: string, files: File[]) => void;
   isStreaming: boolean;
   onAbort: () => void;
+  /**
+   * True when this room already has a live turn running elsewhere (backend
+   * `activeTurn`, before/without us having attached to it via resume()).
+   * Locks the send control the same way `isStreaming` does, without
+   * swapping to the abort button — there's nothing local to abort yet.
+   */
+  locked?: boolean;
 }
 
-export function InputBar({ onSend, isStreaming, onAbort }: InputBarProps) {
+export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -77,7 +84,7 @@ export function InputBar({ onSend, isStreaming, onAbort }: InputBarProps) {
     // the backend makes the authoritative inline-vs-ingest decision.
     const sendable = attachments.filter((a) => a.route !== "reject");
     if (!trimmed && sendable.length === 0) return;
-    if (isStreaming) return;
+    if (isStreaming || locked) return;
 
     // Pass the raw File objects — the receiver uploads them all to
     // POST /sessions/:id/attachments, then starts the chat turn with the
@@ -184,8 +191,9 @@ export function InputBar({ onSend, isStreaming, onAbort }: InputBarProps) {
                 size="icon"
                 onClick={handleSend}
                 disabled={
-                  !text.trim() &&
-                  attachments.every((a) => a.route === "reject")
+                  locked ||
+                  (!text.trim() &&
+                    attachments.every((a) => a.route === "reject"))
                 }
                 aria-label="Send message"
                 className="rounded-full"

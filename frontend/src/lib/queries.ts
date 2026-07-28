@@ -21,6 +21,14 @@ export function useSessions() {
   return useQuery({
     queryKey: queryKeys.sessions,
     queryFn: api.getSessions,
+    // Poll while any session has a live turn, so the sidebar's "generating"
+    // dot and resume-on-entry stay fresh without a page reload.
+    refetchInterval: (query) => {
+      const sessions = query.state.data as { activeTurn?: boolean }[] | undefined;
+      if (!sessions || sessions.length === 0) return false;
+      const anyActive = sessions.some((s) => s.activeTurn);
+      return anyActive ? 2500 : false;
+    },
   });
 }
 

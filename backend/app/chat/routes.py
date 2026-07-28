@@ -1,12 +1,16 @@
-"""Chat HTTP route (§7) — wraps `run_turn` in an SSE response.
+"""Chat HTTP routes (§7) — spawn/observe a detached chat turn as an SSE response.
 
-The route itself does no chat-loop logic: it resolves the session (owned-by
-check, same pattern as `app/sessions/routes.py`), wires a `ToolRegistry` +
-`ToolContext`, and streams whatever `run_turn` yields as SSE frames.
+The route itself does no chat-loop logic. `POST /{session_id}/chat` resolves
+the session (owned-by check, same pattern as `app/sessions/routes.py`),
+computes the display/model message content, then hands off to the
+`ChatTurnRegistry` (`app/chat/turns.py`): `spawn()` starts the turn as a
+detached background task (so a client disconnect doesn't cancel it), and the
+route streams SSE frames by `observe()`-ing that task's replay log from index
+0. `TurnInProgress` (a turn is already live for this session) maps to a 409.
 
-MCP tool resolution is per-caller and async (§M4b.3): it happens INSIDE the
-async `gen()` generator before `run_turn`, so the DB session is still live and
-no MCP connection crosses a yield boundary (anyio-safe).
+`GET /{session_id}/stream` resumes/tails a turn already in flight for the
+room — same `observe()` mechanism, from index 0 — or yields an empty stream
+if the room is idle.
 
 Stage 6: inline `attachments` with `ingested=False` by extracting their text
 and prepending it to the message sent to the model.
@@ -16,32 +20,33 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
 
 from app.auth.deps import CurrentUser, DbSession
 from app.chat.client import ModelClient, get_model_client
-from app.chat.loop import run_turn
+from app.chat.turns import ChatTurnRegistry, TurnInProgress
 from app.errors import ApiError
 from app.kb.routes import get_embedder_dep, get_qdrant
-from app.mcp.resolve import resolve_caller_mcp_tools
 from app.models import Attachment, ChatSession
 from app.rag.embedder import Embedder
 from app.rag.extract import extract_text
 from app.sse import sse
-from app.tools.builtin.create_artifact import CreateArtifact
-from app.tools.builtin.execute_code import ExecuteCode
-from app.tools.builtin.search_kb import SearchKnowledgeBase
-from app.tools.context import ToolContext
-from app.tools.registry import ToolRegistry
 
 router = APIRouter()
 
 QdrantDep = Annotated[QdrantClient, Depends(get_qdrant)]
 EmbedderDep = Annotated[Embedder, Depends(get_embedder_dep)]
 ModelClientDep = Annotated[ModelClient, Depends(get_model_client)]
+
+
+def get_chat_turns(request: Request) -> ChatTurnRegistry:
+    return request.app.state.chat_turns
+
+
+ChatTurnsDep = Annotated[ChatTurnRegistry, Depends(get_chat_turns)]
 
 
 class ChatRequest(BaseModel):
@@ -57,26 +62,20 @@ def _owned(db: DbSession, user_id: str, session_id: str) -> ChatSession:
     return s
 
 
-def _build_registry() -> ToolRegistry:
-    """Build a registry with the three built-in tools pre-registered."""
-    registry = ToolRegistry()
-    registry.register(SearchKnowledgeBase())
-    registry.register(ExecuteCode())
-    registry.register(CreateArtifact())
-    return registry
-
-
 @router.post("/{session_id}/chat")
-def chat(
+async def chat(
     session_id: str,
     body: ChatRequest,
     user: CurrentUser,
     db: DbSession,
-    client: QdrantDep,
-    embedder: EmbedderDep,
-    model: ModelClientDep,
+    chat_turns: ChatTurnsDep,
 ) -> StreamingResponse:
-    session = _owned(db, user.id, session_id)
+    # NOTE: this must be `async def`, not `def`. FastAPI runs sync path
+    # operations in a worker thread (no running event loop there), but
+    # `chat_turns.spawn()` calls `asyncio.create_task()` and needs one — the
+    # same reason `kb/routes.py::upload_file` (which calls `ingest_jobs.spawn()`)
+    # is `async def` too.
+    _owned(db, user.id, session_id)
 
     # --- Stage 6: split display content (persisted/shown) from model content -
     # The user's bubble shows `body.message`; the model additionally sees the
@@ -104,36 +103,23 @@ def chat(
         if inline_blocks:
             model_content = "\n\n---\n\n".join(inline_blocks) + f"\n\n---\n\n{body.message}"
 
-    ctx = ToolContext(
-        user_id=user.id,
-        session_id=session_id,
-        db=db,
-        client=client,
-        embedder=embedder,
-    )
-
-    async def gen():
-        # Resolve per-caller MCP tools async INSIDE gen() — the DB session is
-        # alive here and no MCP connection crosses a yield boundary.
-        mcp_tools = await resolve_caller_mcp_tools(db, user)
-        registry = _build_registry()
-        for t in mcp_tools:
-            registry.register(t)
-
-        async for event in run_turn(
-            db=db,
-            session=session,
+    try:
+        chat_turns.spawn(
+            session_id,
+            user_id=user.id,
             message=body.message,
             model_content=model_content,
             attachment_ids=attachment_ids,
-            registry=registry,
-            model=model,
-            ctx=ctx,
-        ):
+        )
+    except TurnInProgress:
+        raise ApiError(409, "turn_in_progress", "This chat already has a reply in progress")
+
+    async def _stream():
+        async for event in chat_turns.observe(session_id, from_index=0):
             yield sse(event)
 
     return StreamingResponse(
-        gen(),
+        _stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -141,3 +127,20 @@ def chat(
             "Connection": "keep-alive",
         },
     )
+
+
+@router.get("/{session_id}/stream")
+def stream(
+    session_id: str,
+    user: CurrentUser,
+    db: DbSession,
+    chat_turns: ChatTurnsDep,
+) -> StreamingResponse:
+    _owned(db, user.id, session_id)
+
+    async def _stream():
+        if chat_turns.has_active(session_id):
+            async for event in chat_turns.observe(session_id, from_index=0):
+                yield sse(event)
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")

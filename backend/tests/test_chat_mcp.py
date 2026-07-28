@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 
-import app.chat.routes as chat_routes_module
+import app.chat.turns as chat_turns_module  # MCP resolution runs inside the detached turn
 from app.chat.client import ModelChunk
 from app.chat.routes import get_model_client
 from app.main import app
@@ -121,7 +121,7 @@ def test_mcp_tool_called_emits_calling_tool_events(client, auth_headers, monkeyp
     async def _resolve(db, user, **_):
         return [_FakeEchoTool()]
 
-    monkeypatch.setattr(chat_routes_module, "resolve_caller_mcp_tools", _resolve)
+    monkeypatch.setattr(chat_turns_module, "resolve_caller_mcp_tools", _resolve)
     app.dependency_overrides[get_model_client] = lambda: _FakeModelClient(script)
     try:
         r = client.post(
@@ -168,7 +168,7 @@ def test_mcp_tool_error_feeds_back_and_loop_finishes(client, auth_headers, monke
     async def _resolve(db, user, **_):
         return [_FakeErrorTool()]
 
-    monkeypatch.setattr(chat_routes_module, "resolve_caller_mcp_tools", _resolve)
+    monkeypatch.setattr(chat_turns_module, "resolve_caller_mcp_tools", _resolve)
     app.dependency_overrides[get_model_client] = lambda: _FakeModelClient(script)
     try:
         r = client.post(
@@ -196,7 +196,7 @@ def test_no_granted_server_no_mcp_tools(client, auth_headers, monkeypatch):
     async def _resolve(db, user, **_):
         return []
 
-    monkeypatch.setattr(chat_routes_module, "resolve_caller_mcp_tools", _resolve)
+    monkeypatch.setattr(chat_turns_module, "resolve_caller_mcp_tools", _resolve)
     app.dependency_overrides[get_model_client] = lambda: _FakeModelClient(
         [[ModelChunk(type="text", text="native answer")]]
     )
@@ -232,7 +232,7 @@ def test_group_isolation_user_sees_only_own_tools(client, auth_headers, monkeypa
         # Simulate: this user's groups grant no MCP servers
         return []
 
-    monkeypatch.setattr(chat_routes_module, "resolve_caller_mcp_tools", _resolve)
+    monkeypatch.setattr(chat_turns_module, "resolve_caller_mcp_tools", _resolve)
     app.dependency_overrides[get_model_client] = lambda: _FakeModelClient(
         [[ModelChunk(type="text", text="ok")]]
     )
