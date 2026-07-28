@@ -313,11 +313,12 @@ class FasterWhisper:
     the CPU no matter what --device says. Accuracy is unaffected (int8 vs fp16
     moves WER by a fraction of a point); speed obviously is."""
 
-    def __init__(self, key: str, device: str):
+    def __init__(self, key: str, device: str, vad: bool = False):
         from faster_whisper import WhisperModel
 
         if device != "cuda":
             print("  (faster-whisper: CPU/int8 -- CTranslate2 has no MPS backend)")
+        self.vad = vad
         self.model = WhisperModel(
             FW_MODELS[key],
             device="cuda" if device == "cuda" else "cpu",
@@ -326,7 +327,7 @@ class FasterWhisper:
 
     def transcribe(self, samples, language: str | None) -> str:
         segments, _ = self.model.transcribe(
-            samples, language=language, beam_size=5, vad_filter=False,
+            samples, language=language, beam_size=5, vad_filter=self.vad,
         )
         return "".join(seg.text for seg in segments).strip()
 
@@ -360,8 +361,18 @@ class QwenASR:
         return (results[0].text or "").strip()
 
 
-def build_engine(key: str, device: str):
-    return FasterWhisper(key, device) if key in FW_MODELS else QwenASR(key, device)
+def build_engine(key: str, device: str, vad: bool = False):
+    return FasterWhisper(key, device, vad) if key in FW_MODELS else QwenASR(key, device)
+
+
+def classify_silence(text: str) -> str:
+    """Not all silence output is equal: '. . . .' is a cosmetic artifact a
+    two-line filter removes, while a fabricated SENTENCE would reach the model
+    as a real user message. Only the latter is disqualifying."""
+    stripped = text.strip()
+    if not stripped:
+        return "clean"
+    return "punct-only" if not re.search(r"\w", stripped) else "HALLUCINATED"
 
 
 # ---------------------------------------------------------------------------
@@ -404,11 +415,11 @@ def discover(sample_dir: Path, wanted: set[str] | None) -> list[tuple[Clip, Path
     return pairs
 
 
-def run_engine(key: str, pairs, device: str, language: str | None) -> EngineResult:
+def run_engine(key: str, pairs, device: str, language: str | None, vad: bool = False) -> EngineResult:
     print(f"\n=== {key} " + "=" * (60 - len(key)))
     t0 = time.perf_counter()
     try:
-        engine = build_engine(key, device)
+        engine = build_engine(key, device, vad)
     except ImportError as exc:
         print(f"  SKIP -- {exc}. Install it in this env (see the usage header).")
         return EngineResult(key, 0.0, None, None, error=str(exc))
@@ -430,7 +441,8 @@ def run_engine(key: str, pairs, device: str, language: str | None) -> EngineResu
 
         flag = ""
         if clip.kind == "silence":
-            flag = "  <-- HALLUCINATION" if text.strip() else "  (clean)"
+            verdict = classify_silence(text)
+            flag = "  (clean)" if verdict == "clean" else f"  <-- {verdict.upper()}"
         score = f"WER {cr.wer:5.1%}  CER {cr.cer:5.1%}" if cr.wer is not None else " " * 22
         print(f"  {clip.num} {clip.label:<24} {audio_sec:5.1f}s  "
               f"{proc:5.2f}s  RTFx{cr.rtf:5.1f}  {score}{flag}")
@@ -460,6 +472,8 @@ def main() -> None:
                     help="force a language (id|en); omit for auto-detect")
     ap.add_argument("--device", default=None, choices=["cuda", "mps", "cpu"],
                     help="default: autodetect (cuda > mps > cpu)")
+    ap.add_argument("--vad", action="store_true",
+                    help="faster-whisper: enable the VAD pre-filter (kills silence artifacts)")
     ap.add_argument("--out", type=Path, default=None, help="write the raw JSON report here")
     args = ap.parse_args()
 
@@ -479,7 +493,7 @@ def main() -> None:
     print(f"{len(pairs)} clips from {args.sample_dir}, "
           f"language={args.language or 'auto'}, device={device}")
 
-    results = [run_engine(k.strip(), pairs, device, args.language)
+    results = [run_engine(k.strip(), pairs, device, args.language, args.vad)
                for k in args.engines.split(",") if k.strip()]
 
     print("\n" + "=" * 72)
@@ -493,7 +507,7 @@ def main() -> None:
         mw = sum(c.wer for c in scored) / len(scored) if scored else float("nan")
         mr = sum(c.rtf for c in r.clips) / len(r.clips) if r.clips else float("nan")
         sil = next((c for c in r.clips if c.kind == "silence"), None)
-        sil_txt = "-" if sil is None else ("clean" if not sil.text.strip() else "HALLUCINATED")
+        sil_txt = "-" if sil is None else classify_silence(sil.text)
         print(f"{r.engine:<14}{mw:>9.1%}{mr:>11.1f}{r.load_sec:>9.1f}"
               f"{r.peak_rss_mb or float('nan'):>9.0f}{r.vram_mb or float('nan'):>9.0f}"
               f"  {sil_txt}")
