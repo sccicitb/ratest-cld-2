@@ -210,7 +210,7 @@ export function Sidebar() {
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <span
-                                      className="size-1.5 shrink-0 animate-pulse rounded-full bg-brand-red"
+                                      className="ml-auto size-1.5 shrink-0 animate-pulse rounded-full bg-brand-red"
                                       aria-label="Generating"
                                     />
                                   </TooltipTrigger>
