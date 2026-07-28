@@ -117,6 +117,7 @@ export async function* streamChat(
   sessionId: string,
   msg: string,
   attachments?: Attachment[],
+  signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
   const res = await fetch(PREFIX(`/api/sessions/${sessionId}/chat`), {
     method: "POST",
@@ -127,6 +128,7 @@ export async function* streamChat(
       ...authHeaders(),
     },
     body: JSON.stringify({ message: msg, attachments }),
+    signal,
   });
   if (!res.ok || !res.body) {
     let info: { message?: string; code?: string } = {};
@@ -142,6 +144,7 @@ export async function* streamChat(
  */
 export async function* streamResume(
   sessionId: string,
+  signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
   const res = await fetch(PREFIX(`/api/sessions/${sessionId}/stream`), {
     method: "GET",
@@ -150,6 +153,7 @@ export async function* streamResume(
       Accept: "text/event-stream",
       ...authHeaders(),
     },
+    signal,
   });
   if (!res.ok || !res.body) {
     let info: { message?: string; code?: string } = {};
