@@ -101,6 +101,11 @@ Edit `backend/.env` and fill in all `<placeholder>` values:
 - `CODE_EXEC_URL=http://<VM_IP>:8001`
 - `MODEL_BASE_URL` — your llama-server endpoint
 - `JWT_SECRET` — a 32+ byte random string (use `python -c "import secrets; print(secrets.token_hex(32))"`)
+- `ADMIN_EMAIL` / `ADMIN_PASSWORD` — the first admin, created on boot (§3e).
+  Required on a fresh database: there is no signup route.
+- `MCP_TOKEN_KEY` — Fernet key encrypting MCP bearer tokens at rest (`python -c
+  "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`).
+  Needed before adding a server token in `/admin`; keep it with the database.
 - `COOKIE_SECURE=true`
 - `SPA_DIR=../frontend/build/client`
 
@@ -126,7 +131,23 @@ cd backend
 uv run alembic upgrade head
 ```
 
-### 3e · Start the backend
+### 3e · First admin
+
+A migrated database is **empty**, and accounts are admin-provisioned — there is
+no signup route.  The only way in is the startup bootstrap: set `ADMIN_EMAIL`
+and `ADMIN_PASSWORD` in `backend/.env` (§3b) and the app creates that admin on
+boot, or promotes the user if the email already exists.  It is idempotent, so
+leave the values set across restarts.
+
+Everything else — users, groups, KB group assignments, the MCP catalog — is
+created from `/admin` once you are logged in.
+
+> **Do not run `python -m app.seed` in production.**  That is the dev seed: it
+> creates `demo@example.com` with the well-known password `demo1234`, which on
+> a Cloudflare-exposed origin is an open door.  It exists for local development
+> parity with the frontend's login pre-fill.
+
+### 3f · Start the backend
 
 ```powershell
 cd backend
@@ -135,7 +156,7 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 The backend serves both `/api/*` and the built SPA at `/`.
 
-### 3f · Run as a Windows service (NSSM)
+### 3g · Run as a Windows service (NSSM)
 
 For production, use [NSSM](https://nssm.cc/) to manage the process:
 
@@ -219,3 +240,43 @@ curl https://your-domain.example.com/api/health
 | Frontend uses real fetch; UI works end-to-end | Full UI walkthrough |
 
 **Not applicable in this deployment:** items that require a CI/CD pipeline or staging environment are verified manually per this runbook.
+
+---
+
+## 7 · Reset — start a deployment fresh
+
+Wipes all application state.  Stop the backend (or `nssm stop rag-backend`) first.
+
+Persistent state lives in exactly three places:
+
+**1 · SQLite + blobs (Windows host)** — users, groups, sessions, messages, KB
+records, MCP catalog, artifacts, plus the uploaded file bytes.
+
+```powershell
+cd backend
+Remove-Item -Recurse -Force data    # app.db, app.db-wal, app.db-shm, blobs/
+```
+
+Both directories are recreated on demand, so deleting `data/` wholesale is safe.
+
+**2 · Qdrant collection (Linux VM)** — the vectors.  Recreated automatically on
+the first ingest:
+
+```bash
+curl -X DELETE http://<VM_IP>:6333/collections/kb_chunks
+```
+
+**3 · Nothing else.**  OCR models (§3c) are a cache, not state — no need to
+re-provision unless you wiped them too.
+
+Then bring it back up:
+
+```powershell
+cd backend
+uv run alembic upgrade head        # recreate the schema
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000   # bootstraps the admin (§3e)
+```
+
+> **`MCP_TOKEN_KEY` and the database travel together.**  Stored MCP bearer
+> tokens are Fernet-encrypted with that key; rotating it orphans them.  A full
+> wipe is the one safe moment to change it.
