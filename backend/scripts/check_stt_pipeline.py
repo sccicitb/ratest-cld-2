@@ -42,6 +42,12 @@ and neither belongs in the backend's env):
 Audio lives in backend/data/voice_samples/ (gitignored -- recordings are the
 user's). Clips are matched by their leading NN- prefix, so file naming beyond
 that is free.
+
+Dev (Apple Silicon) vs prod (L40): device is autodetected (cuda > mps > cpu).
+On a Mac, WER/CER, code-switching and the silence check are still valid -- they
+are properties of the model. Latency, RTF and memory are NOT: CTranslate2 has
+no Metal backend, so faster-whisper runs on the CPU there. Re-run on the L40
+before quoting any speed number.
 """
 from __future__ import annotations
 
@@ -240,6 +246,20 @@ def _decode_av(path: Path):
 # ---------------------------------------------------------------------------
 
 
+def autodetect_device() -> str:
+    """cuda > mps > cpu. torch may be absent entirely (faster-whisper doesn't
+    need it), in which case CPU is the only thing CTranslate2 can use anyway."""
+    try:
+        import torch
+    except ImportError:
+        return "cpu"
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def peak_rss_mb() -> float | None:
     try:
         import psutil
@@ -286,14 +306,21 @@ ENGINES = list(FW_MODELS) + list(QWEN_MODELS)
 
 
 class FasterWhisper:
-    """CTranslate2 backend. float16 on the L40 -- 48 GB means no quantisation
-    compromise, so accuracy is measured at full precision."""
+    """CTranslate2 backend. float16 on the prod L40 (48 GB -- no quantisation
+    compromise); int8 on CPU.
+
+    NOTE: CTranslate2 has no Metal/MPS backend, so on Apple Silicon this runs on
+    the CPU no matter what --device says. Accuracy is unaffected (int8 vs fp16
+    moves WER by a fraction of a point); speed obviously is."""
 
     def __init__(self, key: str, device: str):
         from faster_whisper import WhisperModel
 
+        if device != "cuda":
+            print("  (faster-whisper: CPU/int8 -- CTranslate2 has no MPS backend)")
         self.model = WhisperModel(
-            FW_MODELS[key], device=device,
+            FW_MODELS[key],
+            device="cuda" if device == "cuda" else "cpu",
             compute_type="float16" if device == "cuda" else "int8",
         )
 
@@ -315,10 +342,14 @@ class QwenASR:
         import torch
         from qwen_asr import Qwen3ASRModel
 
+        # bfloat16 on CUDA (what the model card uses); float16 on MPS to halve
+        # unified memory -- 1.7B at float32 is ~6.8 GB, which hurts on an 8/16 GB
+        # Mac. float32 on plain CPU, where fp16 is slower, not faster.
+        dtype = {"cuda": torch.bfloat16, "mps": torch.float16}.get(device, torch.float32)
         self.model = Qwen3ASRModel.from_pretrained(
             QWEN_MODELS[key],
-            dtype=torch.bfloat16 if device == "cuda" else torch.float32,
-            device_map=f"{device}:0" if device == "cuda" else "cpu",
+            dtype=dtype,
+            device_map="cuda:0" if device == "cuda" else device,
             max_new_tokens=256,
         )
 
@@ -427,21 +458,28 @@ def main() -> None:
     ap.add_argument("--sample-dir", type=Path, default=DEFAULT_SAMPLE_DIR)
     ap.add_argument("--language", default=None,
                     help="force a language (id|en); omit for auto-detect")
-    ap.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
+    ap.add_argument("--device", default=None, choices=["cuda", "mps", "cpu"],
+                    help="default: autodetect (cuda > mps > cpu)")
     ap.add_argument("--out", type=Path, default=None, help="write the raw JSON report here")
     args = ap.parse_args()
 
     if not args.sample_dir.is_dir():
         raise SystemExit(f"No sample dir: {args.sample_dir}")
 
+    device = args.device or autodetect_device()
+    if device != "cuda":
+        print("NOTE: not CUDA -- WER/CER, code-switching and the silence check are\n"
+              "      device-independent and DO transfer to prod. Latency, RTF and\n"
+              "      memory do NOT: re-run this on the L40 before trusting them.")
+
     wanted = set(args.clips.split(",")) if args.clips else None
     pairs = discover(args.sample_dir, wanted)
     if not pairs:
         raise SystemExit("No clips found -- expected files named NN-*.<ext>")
     print(f"{len(pairs)} clips from {args.sample_dir}, "
-          f"language={args.language or 'auto'}, device={args.device}")
+          f"language={args.language or 'auto'}, device={device}")
 
-    results = [run_engine(k.strip(), pairs, args.device, args.language)
+    results = [run_engine(k.strip(), pairs, device, args.language)
                for k in args.engines.split(",") if k.strip()]
 
     print("\n" + "=" * 72)
