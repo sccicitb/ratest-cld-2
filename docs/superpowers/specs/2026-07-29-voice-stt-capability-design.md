@@ -128,10 +128,27 @@ Failures follow the existing `{ message, code }` contract:
 
 ## 6. Frontend
 
-`InputBar` gains a mic button left of send.
+**There is already a mic button, and it must be replaced, not added.**
+`InputBar.tsx:41` consumes `useVoiceInput()`, which is implemented on the
+browser **Web Speech API** (`webkitSpeechRecognition`) — Chrome's implementation
+streams audio to Google's servers. On an air-gapped prod network it cannot work:
+the API reports `isSupported: true`, the button renders, and recognition then
+fails on the network call. So today's mic is a control that looks available and
+isn't, and it routes user speech to a third party wherever it *does* work.
+
+①a therefore **rewrites the internals of `useVoiceInput`** — `MediaRecorder` +
+upload to our own endpoint — and keeps the button, its placement, and its
+existing behaviour of piping the transcript into the composer text
+(`InputBar.tsx:57-60`). The Web Speech path is deleted, not left as a fallback:
+a silent fallback to Google is exactly the behaviour the air-gap forbids.
 
 States: **idle** → **recording** (elapsed timer, button becomes stop) →
 **transcribing** (spinner) → **text in the composer**.
+
+Out of scope but noted: `MessageBubble.tsx:64` has a read-aloud button on
+`useVoiceSynthesis()` (browser `speechSynthesis`, OS voices). That is ①b's
+problem — but it means the TTS half also arrives as a replacement, and its
+Indonesian voice quality depends on whatever the OS ships.
 
 **The transcript lands in the composer as editable text — it is never sent
 automatically.** At 5–15% WER on real speech that is not a courtesy, it is the
@@ -183,6 +200,7 @@ secure context — satisfied in prod by the Cloudflare Tunnel and in dev by
 | Sidecar down → dead mic button | Capability flag hides it; `stt_unavailable` if raced. |
 | Whisper mishears domain terms (`retribusi`) | Accepted for ①a; `initial_prompt` seeding with domain vocabulary is a cheap future lever. |
 | A second process to operate on Windows | NSSM service alongside the backend, documented in DEPLOY.md §3 with the same shape as the existing entries. |
+| The shipping Web Speech mic sends audio to Google and cannot work air-gapped | Replaced outright in Task 3; no fallback path retained. |
 
 ## 10. Follow-ups (not built here)
 
