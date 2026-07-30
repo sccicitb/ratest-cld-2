@@ -44,7 +44,15 @@ app = FastAPI(title="Voice Service", version="0.1.0", lifespan=lifespan)
 
 
 def get_transcriber() -> Transcriber:
-    """Seam: tests override this so no weights are needed."""
+    """Returns the transcriber lifespan() built into the module global.
+
+    This alone is not the test seam: lifespan() calls build_transcriber()
+    directly rather than through this dependency, so overriding it here
+    would not stop a real engine from loading at TestClient startup. The
+    real seam is patching build_transcriber before the app's lifespan runs
+    (see tests/conftest.py's client fixture); the dependency_overrides entry
+    on this function is kept alongside it only as a second, route-level guard.
+    """
     assert _transcriber is not None, "transcriber not initialised"
     return _transcriber
 
