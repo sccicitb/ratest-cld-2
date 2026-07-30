@@ -1,6 +1,8 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, transcribeAudio } from "@/lib/api";
+import { VOICE_CAPABILITIES_KEY } from "@/lib/queries";
 
 /**
  * Record with MediaRecorder, transcribe on our own backend.
@@ -104,6 +106,7 @@ export function useVoiceInput({ onTranscript }: UseVoiceInputOptions = {}) {
   // startRecording/stopRecording on every render.
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
+  const qc = useQueryClient();
 
   const isSupported =
     typeof window !== "undefined" &&
@@ -205,12 +208,19 @@ export function useVoiceInput({ onTranscript }: UseVoiceInputOptions = {}) {
       const { text } = await transcribeAudio(blob);
       return text;
     } catch (e) {
+      if (e instanceof ApiError && e.code === "stt_unavailable") {
+        // The sidecar died since the backend's startup probe. Capabilities are
+        // cached with staleTime: Infinity, so without this the mic stays visible
+        // for the rest of the session and every press fails the same way.
+        // invalidateQueries refetches active queries regardless of staleTime.
+        void qc.invalidateQueries({ queryKey: VOICE_CAPABILITIES_KEY });
+      }
       setError(messageForTranscribeError(e));
       return "";
     } finally {
       setIsTranscribing(false);
     }
-  }, []);
+  }, [qc]);
 
   // The elapsed timer, and the auto-stop it exists to make possible. Without
   // the cap, a mic left on runs until the 10 MB byte ceiling -- roughly 40

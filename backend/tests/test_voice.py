@@ -1,6 +1,8 @@
 """Backend voice proxy: auth, limits, and honest failure when the sidecar is down."""
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 
@@ -173,7 +175,71 @@ def test_capabilities_false_when_unconfigured(client, auth_headers, monkeypatch)
     assert resp.json() == {"stt": False}
 
 
-def test_capabilities_true_when_configured(client, auth_headers, sidecar_ok):
-    resp = client.get("/api/voice/capabilities", headers=auth_headers)
+def test_capabilities_reports_the_startup_probe_not_just_the_url(
+    client, auth_headers, monkeypatch
+):
+    """Spec §5: configured AND /health answered.
 
-    assert resp.json() == {"stt": True}
+    A URL in .env with nothing behind it is exactly the case that produced a mic
+    button for every user and a 503 on every press.
+    """
+    monkeypatch.setattr(settings, "voice_service_url", "http://voice:8002")
+    monkeypatch.setattr(app.state, voice_routes.STT_READY_ATTR, False,
+                        raising=False)
+
+    assert client.get("/api/voice/capabilities", headers=auth_headers).json() == {
+        "stt": False
+    }
+
+    monkeypatch.setattr(app.state, voice_routes.STT_READY_ATTR, True, raising=False)
+
+    assert client.get("/api/voice/capabilities", headers=auth_headers).json() == {
+        "stt": True
+    }
+
+
+def _stub_probe(monkeypatch, response: httpx.Response | Exception) -> dict:
+    """Point `probe_sidecar`'s client at a canned /health response."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(
+        voice_routes, "_probe_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    return seen
+
+
+def test_probe_is_false_when_unconfigured(monkeypatch):
+    monkeypatch.setattr(settings, "voice_service_url", "")
+
+    assert asyncio.run(voice_routes.probe_sidecar()) is False
+
+
+def test_probe_is_false_when_the_sidecar_is_not_running(monkeypatch):
+    """The probe must swallow connection errors: a voice sidecar that is down
+    cannot be allowed to stop the backend from starting."""
+    monkeypatch.setattr(settings, "voice_service_url", "http://voice:8002")
+    _stub_probe(monkeypatch, httpx.ConnectError("refused"))
+
+    assert asyncio.run(voice_routes.probe_sidecar()) is False
+
+
+def test_probe_is_false_on_a_non_200_health(monkeypatch):
+    monkeypatch.setattr(settings, "voice_service_url", "http://voice:8002")
+    _stub_probe(monkeypatch, httpx.Response(503))
+
+    assert asyncio.run(voice_routes.probe_sidecar()) is False
+
+
+def test_probe_is_true_when_health_answers(monkeypatch):
+    monkeypatch.setattr(settings, "voice_service_url", "http://voice:8002")
+    seen = _stub_probe(monkeypatch, httpx.Response(200, json={"status": "ok"}))
+
+    assert asyncio.run(voice_routes.probe_sidecar()) is True
+    assert seen["url"] == "http://voice:8002/health"

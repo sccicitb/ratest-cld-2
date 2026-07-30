@@ -126,6 +126,19 @@ async def lifespan(app: FastAPI):
         session_factory=get_session_factory(),
         max_concurrent=settings.max_concurrent_chat_turns,
     )
+    # Voice sidecar reachability (spec §5): `/api/voice/capabilities` reports
+    # `stt: true` only when VOICE_SERVICE_URL is set AND /health answered, so the
+    # mic button never renders against a sidecar that isn't running. Probed once
+    # here rather than per request, and non-fatal by construction — probe_sidecar
+    # swallows its own errors, and this try is the belt to that braces.
+    from app.voice.routes import STT_READY_ATTR, probe_sidecar
+
+    try:
+        setattr(app.state, STT_READY_ATTR, await probe_sidecar())
+    except Exception:
+        log.exception("Voice sidecar probe raised — continuing with voice disabled.")
+        setattr(app.state, STT_READY_ATTR, False)
+
     try:
         _rdb = SessionLocal()
         try:

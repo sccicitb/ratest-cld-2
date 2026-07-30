@@ -5,16 +5,22 @@ conversation, and keeping it separate lets ② and ③ call it from anywhere.
 """
 from __future__ import annotations
 
+import logging
 from typing import AsyncIterator
 
 import httpx
-from fastapi import APIRouter, Depends, Form, UploadFile
+from fastapi import APIRouter, Depends, Form, Request, UploadFile
 
 from app.auth.deps import get_current_user
 from app.config import settings
 from app.errors import ApiError
 
+log = logging.getLogger(__name__)
+
 router = APIRouter()
+
+#: Where the startup probe's verdict lives. Read by `capabilities`.
+STT_READY_ATTR = "voice_stt_ready"
 
 
 async def get_http_client() -> AsyncIterator[httpx.AsyncClient]:
@@ -25,10 +31,54 @@ async def get_http_client() -> AsyncIterator[httpx.AsyncClient]:
         yield hc
 
 
+def _probe_client() -> httpx.AsyncClient:
+    """Test seam for `probe_sidecar`.
+
+    The probe runs from the lifespan, before any request exists, so there is no
+    `Depends` to override the way `/transcribe` does — tests patch this instead.
+    """
+    return httpx.AsyncClient(timeout=settings.voice_probe_timeout_seconds)
+
+
+async def probe_sidecar() -> bool:
+    """Did the sidecar's /health answer? Called once, from the backend's lifespan.
+
+    Spec §5: `stt` is true when VOICE_SERVICE_URL is set **and** /health
+    answered. `bool(url)` alone is not the same claim -- a URL in .env with no
+    process behind it produced a mic button for every user and a 503 on every
+    press, which is precisely the dead-control-that-looks-available this feature
+    exists to remove.
+
+    Never raises. A voice probe must not be able to stop the backend from
+    starting; the failure mode is "no mic button", not "no app".
+    """
+    if not settings.voice_service_url:
+        return False
+    url = f"{settings.voice_service_url}/health"
+    try:
+        async with _probe_client() as hc:
+            resp = await hc.get(url)
+    except Exception as exc:
+        log.warning("Voice sidecar probe failed (%s) — mic disabled: %s", url, exc)
+        return False
+    if resp.status_code != 200:
+        log.warning(
+            "Voice sidecar %s answered %s — mic disabled", url, resp.status_code
+        )
+        return False
+    log.info("Voice sidecar ready at %s", settings.voice_service_url)
+    return True
+
+
 @router.get("/capabilities")
-def capabilities(_=Depends(get_current_user)) -> dict:
-    """Drives whether the frontend renders the mic at all."""
-    return {"stt": bool(settings.voice_service_url)}
+def capabilities(request: Request, _=Depends(get_current_user)) -> dict:
+    """Drives whether the frontend renders the mic at all.
+
+    Reports the startup probe's verdict rather than re-probing per request: this
+    is called on every chat page load, and a per-request round-trip to the
+    sidecar would put its latency in front of the composer rendering.
+    """
+    return {"stt": bool(getattr(request.app.state, STT_READY_ATTR, False))}
 
 
 #: Codes the sidecar is allowed to speak in its own voice. A 4xx from the sidecar
