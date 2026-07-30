@@ -43,6 +43,8 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
     isRecording,
     isTranscribing,
     isSupported: voiceSupported,
+    error: voiceError,
+    permissionDenied,
     startRecording,
     stopRecording,
   } = useVoiceInput();
@@ -163,7 +165,7 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
                       variant="ghost"
                       size="icon"
                       onClick={handleMic}
-                      disabled={isTranscribing}
+                      disabled={isTranscribing || permissionDenied}
                       aria-label={
                         isRecording ? "Stop recording" : "Start voice input"
                       }
@@ -183,9 +185,11 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
                   <TooltipContent>
                     {isTranscribing
                       ? "Transcribing…"
-                      : isRecording
-                        ? "Stop recording"
-                        : "Voice input"}
+                      : permissionDenied
+                        ? "Microphone blocked"
+                        : isRecording
+                          ? "Stop recording"
+                          : "Voice input"}
                   </TooltipContent>
                 </Tooltip>
               )}
@@ -218,6 +222,11 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
             )}
           </div>
         </div>
+        {micEnabled && voiceError && (
+          <p className="px-2 pt-1.5 text-center text-xs text-destructive">
+            {voiceError}
+          </p>
+        )}
         <p className="px-2 pt-1.5 text-center text-xs text-muted-foreground">
           Enter to send · Shift+Enter for a new line
         </p>
