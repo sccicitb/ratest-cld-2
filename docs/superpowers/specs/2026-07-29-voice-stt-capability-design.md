@@ -58,7 +58,12 @@ test. It is strong enough to pick an engine and wrong to quote as a WER figure.
 ## 3. Goals / Non-goals
 
 **Goals**
-- Hold-to-record in the composer; release → transcript appears **as editable text**.
+- A click-to-toggle mic in the composer: click to start, click again to stop →
+  transcript appears **as editable text**. (Earlier drafts of this spec said
+  hold-to-record / press-and-release. That was never built: push-to-talk is
+  listed as a ② non-goal below, and holding a button down for a 30-second
+  utterance is worse than toggling it. ①a ships the toggle, and steps ② and ③
+  should not inherit push-to-talk as a premise.)
 - Runs local and air-gapped, on the prod L40, alongside llama-server and BGE-M3.
 - Engine and model swappable by config, without touching the backend's env.
 - Degrades cleanly when the sidecar is absent (the 8 GB dev Mac cannot host it).
@@ -102,9 +107,21 @@ already contains working adapters for both families; they move here largely as-i
 sidecar decodes with **PyAV** to float32 mono 16 kHz — the same path the probe
 uses, so measured accuracy is the accuracy we ship. No ffmpeg binary required.
 
-Limits enforced at the backend edge, before the audio reaches the sidecar:
-`max_audio_bytes` (10 MB) and `max_audio_seconds` (120). A push-to-talk button
-left running in a pocket must not become an unbounded upload.
+Two limits, at the two layers that can actually enforce them. A toggle the user
+forgets to click again must not become an unbounded upload.
+
+- `max_audio_bytes` (10 MB) — at the backend edge, before the audio reaches the
+  sidecar. This is a cheap guard against a large body, not a duration limit:
+  Opus at ~32 kbps only reaches 10 MB at roughly 40 minutes.
+- `max_audio_seconds` (120, `STT_MAX_AUDIO_SECONDS`) — in the **sidecar**, after
+  `decode_audio`, because that is the only place the true duration is known. Over
+  the cap → `413 audio_too_long`, checked before the engine is entered so an
+  over-long clip never occupies the GPU. The backend passes the sidecar's 4xx
+  status and code through unchanged, so the user is told the actual reason.
+
+The browser also stops recording itself at the same cap (see §6), so the normal
+case never produces a rejected upload; the sidecar check is the authority behind
+it, not the user-facing mechanism.
 
 ## 5. Routes
 
@@ -124,7 +141,15 @@ left running in a pocket must not become an unbounded upload.
 
 Failures follow the existing `{ message, code }` contract:
 `stt_unavailable` (503, sidecar down), `audio_too_large` (413),
-`audio_too_long` (413), `stt_failed` (502).
+`audio_too_long` (413), `audio_undecodable` (400), `stt_failed` (502),
+`stt_timeout` (504).
+
+`audio_too_long` and `audio_undecodable` originate in the sidecar and are passed
+through with the sidecar's own status and code — they describe *this recording*,
+so the user can act on them. A 5xx from the sidecar is our problem, not the
+user's, and becomes `stt_failed` (502). The pass-through is allow-listed, so the
+client's set of codes stays closed rather than being whatever a future sidecar
+version emits.
 
 ## 6. Frontend
 
@@ -143,7 +168,16 @@ existing behaviour of piping the transcript into the composer text
 a silent fallback to Google is exactly the behaviour the air-gap forbids.
 
 States: **idle** → **recording** (elapsed timer, button becomes stop) →
-**transcribing** (spinner) → **text in the composer**.
+**transcribing** (spinner) → **text in the composer**. The button is a toggle,
+not a hold (§3): one click in, one click out.
+
+The elapsed timer reads `m:ss / 2:00` — the limit is shown alongside the elapsed
+time rather than only mentioned when it is exceeded — and turns red for the last
+ten seconds. At `2:00` the hook stops recording by itself and transcribes what it
+has, so a forgotten mic yields a usable transcript instead of a rejected upload.
+The client cap mirrors `max_audio_seconds` (§4.1); the sidecar remains the
+authority, and `audio_too_long` still has its own message for the case where an
+operator has configured a lower limit.
 
 Out of scope but noted: `MessageBubble.tsx:64` has a read-aloud button on
 `useVoiceSynthesis()` (browser `speechSynthesis`, OS voices). That is ①b's
