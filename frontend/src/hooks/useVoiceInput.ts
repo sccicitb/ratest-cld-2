@@ -34,6 +34,18 @@ function messageForTranscribeError(e: unknown): string {
   return "Transcription failed — try again.";
 }
 
+/**
+ * Was this a permission refusal, or something else that happens to have thrown?
+ *
+ * Checked by `DOMException.name` rather than `instanceof DOMException` — the
+ * relevant browsers all set the name, and a bare instanceof would still lump
+ * NotFoundError / NotSupportedError in with a genuine denial.
+ */
+function isPermissionError(e: unknown): boolean {
+  const name = (e as { name?: unknown } | null)?.name;
+  return name === "NotAllowedError" || name === "SecurityError";
+}
+
 export function useVoiceInput() {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -59,8 +71,14 @@ export function useVoiceInput() {
     // (not "idle") and returns immediately instead of opening a second stream.
     phaseRef.current = "starting";
     setError(null);
+    // Tracked outside the try so the catch can release a stream that was
+    // successfully acquired before a *later* step threw. Without this, a
+    // MediaRecorder constructor or start() failure leaks the mic for the life
+    // of the page -- the tab's recording indicator stays lit and nothing in
+    // the UI can turn it off again.
+    let stream: MediaStream | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
       chunksRef.current = [];
       recorder.ondataavailable = (e) => {
@@ -70,16 +88,27 @@ export function useVoiceInput() {
       recorderRef.current = recorder;
       phaseRef.current = "recording";
       setIsRecording(true);
-    } catch {
-      // Permission denied, or no input device. Per spec (§6): show
-      // "microphone blocked" with a hint, and keep the control disabled for
-      // the rest of the session -- there is nothing to retry without a
-      // browser-level permission change, which needs a reload to re-check.
+    } catch (e) {
+      stream?.getTracks().forEach((t) => t.stop());
       phaseRef.current = "idle";
-      setPermissionDenied(true);
-      setError(
-        "Microphone blocked — allow access in your browser settings, then reload to try again.",
-      );
+      if (isPermissionError(e)) {
+        // Per spec (§6): show "microphone blocked" with a hint, and keep the
+        // control disabled for the rest of the session -- there is nothing to
+        // retry without a browser-level permission change, which needs a
+        // reload to re-check.
+        setPermissionDenied(true);
+        setError(
+          "Microphone blocked — allow access in your browser settings, then reload to try again.",
+        );
+      } else {
+        // Everything else -- NotFoundError (no input device),
+        // NotSupportedError / NotReadableError (browser or codec can't
+        // record) -- is NOT a permission problem. Telling the user to change a
+        // permission they already granted sends them somewhere that cannot
+        // help, and latching permissionDenied would disable the button for the
+        // session over what may be a transient device error.
+        setError("Could not start recording — check your microphone and try again.");
+      }
     }
   }, [isSupported, permissionDenied]);
 
