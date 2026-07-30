@@ -18,6 +18,13 @@ class Settings:
         # Air-gapped hosts: a directory holding the converted CT2 model, copied in
         # by hand (DEPLOY.md 3h). Takes precedence over `model` when set.
         self.model_dir: str = os.environ.get("STT_MODEL_DIR", "")
+        # Spec §4.1. The backend's byte cap cannot enforce this: Opus at ~32 kbps
+        # only reaches 10 MB at roughly 40 minutes, so a mic left on passes the
+        # edge check and lands on the GPU. The sidecar is the only component that
+        # knows the real duration -- it has decoded the audio.
+        self.max_audio_seconds: float = float(
+            os.environ.get("STT_MAX_AUDIO_SECONDS", "120")
+        )
 
 
 settings = Settings()

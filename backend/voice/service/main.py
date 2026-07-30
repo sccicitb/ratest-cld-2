@@ -108,6 +108,21 @@ async def transcribe(
             {"message": str(exc), "code": "audio_undecodable"}, status_code=400
         )
 
+    # Checked here, after decoding, because this is the only place the true
+    # duration is known -- and before the slot, so an over-long clip never
+    # occupies the engine (spec §4.1 / §5 `audio_too_long`).
+    if duration > settings.max_audio_seconds:
+        return JSONResponse(
+            {
+                "message": (
+                    f"Recording is {round(duration)}s; the limit is "
+                    f"{round(settings.max_audio_seconds)}s"
+                ),
+                "code": "audio_too_long",
+            },
+            status_code=413,
+        )
+
     lang = language or settings.language or None
     async with slot:
         text = await asyncio.to_thread(t.transcribe, samples, lang)

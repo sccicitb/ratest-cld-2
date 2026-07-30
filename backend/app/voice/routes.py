@@ -31,6 +31,29 @@ def capabilities(_=Depends(get_current_user)) -> dict:
     return {"stt": bool(settings.voice_service_url)}
 
 
+#: Codes the sidecar is allowed to speak in its own voice. A 4xx from the sidecar
+#: is a statement about *this recording* -- the user can act on it -- so
+#: flattening it to `stt_failed` (502) throws away the only useful part. 5xx is
+#: different: that is the sidecar's problem, not the user's, and stays
+#: `stt_failed`. The allow-list keeps the client's `code` vocabulary a closed set
+#: rather than whatever a future sidecar version happens to emit.
+_SIDECAR_CLIENT_CODES = {"audio_too_long", "audio_undecodable"}
+
+
+def _sidecar_error(resp: httpx.Response) -> ApiError:
+    """Translate a sidecar error response into our `{message, code}` contract."""
+    if 400 <= resp.status_code < 500:
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {}
+        code = body.get("code") if isinstance(body, dict) else None
+        if code in _SIDECAR_CLIENT_CODES:
+            message = (body.get("message") if isinstance(body, dict) else None) or code
+            return ApiError(resp.status_code, code, str(message))
+    return ApiError(502, "stt_failed", f"Voice service error {resp.status_code}")
+
+
 @router.post("/transcribe")
 async def transcribe(
     audio: UploadFile,
@@ -62,7 +85,7 @@ async def transcribe(
         raise ApiError(503, "stt_unavailable", f"Voice service unavailable: {exc}") from exc
 
     if resp.status_code >= 400:
-        raise ApiError(502, "stt_failed", f"Voice service error {resp.status_code}")
+        raise _sidecar_error(resp)
 
     body = resp.json()
     return {"text": body.get("text", ""), "durationMs": body.get("durationMs", 0)}
