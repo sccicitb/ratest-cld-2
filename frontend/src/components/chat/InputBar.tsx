@@ -13,7 +13,7 @@ import {
   AttachmentPreview,
   type PendingAttachment,
 } from "@/components/chat/AttachmentPreview";
-import { useVoiceInput } from "@/hooks/useVoiceInput";
+import { formatElapsed, useVoiceInput } from "@/hooks/useVoiceInput";
 import { useVoiceCapabilities } from "@/lib/queries";
 import { cn, generateId, routeChatAttachment, SUPPORTED_FILE_TYPES } from "@/lib/utils";
 
@@ -39,15 +39,24 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Append rather than replace: the user may have typed before recording.
+  const appendTranscript = (transcript: string) =>
+    setText((prev) => (prev ? `${prev} ${transcript}` : transcript));
   const {
     isRecording,
     isTranscribing,
     isSupported: voiceSupported,
     error: voiceError,
     permissionDenied,
+    recordingSeconds,
+    maxRecordingSeconds,
     startRecording,
     stopRecording,
-  } = useVoiceInput();
+  } = useVoiceInput({
+    // Reached only when the recording hit the cap and stopped itself — the
+    // transcript has nowhere else to go, since nobody awaited stopRecording().
+    onTranscript: appendTranscript,
+  });
   const { data: voiceCaps } = useVoiceCapabilities();
   const micEnabled = voiceSupported && !!voiceCaps?.stt;
 
@@ -61,9 +70,8 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
 
   const handleMic = async () => {
     if (isRecording) {
-      const text = await stopRecording();
-      // Append rather than replace: the user may have typed before recording.
-      if (text) setText((prev) => (prev ? `${prev} ${text}` : text));
+      const transcript = await stopRecording();
+      if (transcript) appendTranscript(transcript);
     } else {
       void startRecording();
     }
@@ -192,6 +200,25 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
                           : "Voice input"}
                   </TooltipContent>
                 </Tooltip>
+              )}
+
+              {/* Elapsed timer (spec §6). Recording stops itself at the cap, so
+                  the countdown is shown too — the limit should be visible
+                  before it is hit, not explained afterwards. */}
+              {micEnabled && isRecording && (
+                <span
+                  role="timer"
+                  aria-label="Recording time"
+                  className={cn(
+                    "font-mono text-xs tabular-nums",
+                    maxRecordingSeconds - recordingSeconds <= 10
+                      ? "text-brand-red"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {formatElapsed(recordingSeconds)} /{" "}
+                  {formatElapsed(maxRecordingSeconds)}
+                </span>
               )}
             </div>
 
