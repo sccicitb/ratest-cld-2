@@ -168,6 +168,64 @@ nssm set rag-backend AppEnvironmentExtra "VIRTUAL_ENV="
 nssm start rag-backend
 ```
 
+### 3h · Voice service (STT)
+
+Voice input is optional and lives entirely outside the main backend process: a
+separate FastAPI sidecar (`backend/voice/`) that transcribes audio and is
+called over HTTP. Leave `VOICE_SERVICE_URL` unset in `backend/.env` (§3b) and
+the app runs exactly as before, minus the mic button — nothing else changes.
+
+If you want voice, install the sidecar's own dependencies (it has its own
+`pyproject.toml`, separate from the backend's):
+
+```powershell
+cd backend\voice
+uv sync
+```
+
+Prefetch the faster-whisper model once per deploy, so the GPU host never
+hits HuggingFace at runtime — on an air-gapped host that means a hang and a
+failed transcription, not a slow download:
+
+```powershell
+cd backend\voice
+uv run python ..\scripts\setup_stt_model.py
+```
+
+Air-gapped hosts (no outbound internet at all): run the same command with
+`--manifest` on a connected machine, fetch the five listed files, and drop
+them into the directory named by `STT_MODEL_DIR` on the target.
+
+Start the sidecar:
+
+```powershell
+cd backend\voice
+uv run uvicorn voice.service.main:app --host 0.0.0.0 --port 8002
+```
+
+Register it as a second NSSM service, `rag-voice`, alongside `rag-backend`:
+
+```powershell
+nssm install rag-voice "C:\path\to\uv.exe"
+nssm set rag-voice AppParameters "run uvicorn voice.service.main:app --host 0.0.0.0 --port 8002"
+nssm set rag-voice AppDirectory "C:\path\to\repo\backend\voice"
+nssm set rag-voice AppEnvironmentExtra "VIRTUAL_ENV="
+nssm start rag-voice
+```
+
+Verify with:
+
+```powershell
+curl http://localhost:8002/health
+```
+
+`/health` reports the engine, model, and device that **actually loaded** —
+not just what you set in the environment. That is the only way to catch a
+silently wrong `STT_MODEL` (e.g. a typo that fell back to the default, or a
+device that didn't autodetect the GPU as expected). Once it looks right, set
+`VOICE_SERVICE_URL=http://localhost:8002` in `backend/.env` and restart
+`rag-backend` to enable the mic button.
+
 ---
 
 ## 4 · Cloudflare Tunnel Ingress
