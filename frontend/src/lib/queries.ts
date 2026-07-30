@@ -120,3 +120,12 @@ export function useUpdateFileTags() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["kb-files"] }),
   });
 }
+
+// --- Voice ----------------------------------------------------------- //
+export function useVoiceCapabilities() {
+  return useQuery({
+    queryKey: ["voice-capabilities"],
+    queryFn: api.getVoiceCapabilities,
+    staleTime: Infinity, // a sidecar doesn't appear mid-session
+  });
+}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Mic, MicOff, Paperclip, Square } from "lucide-react";
+import { ArrowUp, Loader2, Mic, MicOff, Paperclip, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,6 +14,7 @@ import {
   type PendingAttachment,
 } from "@/components/chat/AttachmentPreview";
 import { useVoiceInput } from "@/hooks/useVoiceInput";
+import { useVoiceCapabilities } from "@/lib/queries";
 import { cn, generateId, routeChatAttachment, SUPPORTED_FILE_TYPES } from "@/lib/utils";
 
 interface InputBarProps {
@@ -40,11 +41,13 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
   const fileInputRef = useRef<HTMLInputElement>(null);
   const {
     isRecording,
-    transcript,
+    isTranscribing,
+    isSupported: voiceSupported,
     startRecording,
     stopRecording,
-    isSupported: voiceSupported,
   } = useVoiceInput();
+  const { data: voiceCaps } = useVoiceCapabilities();
+  const micEnabled = voiceSupported && !!voiceCaps?.stt;
 
   // Auto-grow the textarea.
   useEffect(() => {
@@ -54,10 +57,15 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [text]);
 
-  // Pipe voice transcript into the input.
-  useEffect(() => {
-    if (isRecording && transcript) setText(transcript);
-  }, [transcript, isRecording]);
+  const handleMic = async () => {
+    if (isRecording) {
+      const text = await stopRecording();
+      // Append rather than replace: the user may have typed before recording.
+      if (text) setText((prev) => (prev ? `${prev} ${text}` : text));
+    } else {
+      void startRecording();
+    }
+  };
 
   const addFiles = (files: FileList | null) => {
     if (!files) return;
@@ -92,7 +100,7 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
     onSend(trimmed, sendable.map((a) => a.file));
     setText("");
     setAttachments([]);
-    if (isRecording) stopRecording();
+    if (isRecording) void stopRecording();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -148,13 +156,14 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
                 <TooltipContent>Attach files</TooltipContent>
               </Tooltip>
 
-              {voiceSupported && (
+              {micEnabled && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={isRecording ? stopRecording : startRecording}
+                      onClick={handleMic}
+                      disabled={isTranscribing}
                       aria-label={
                         isRecording ? "Stop recording" : "Start voice input"
                       }
@@ -162,7 +171,9 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
                         isRecording && "text-brand-red",
                       )}
                     >
-                      {isRecording ? (
+                      {isTranscribing ? (
+                        <Loader2 className="size-5 animate-spin" />
+                      ) : isRecording ? (
                         <MicOff className="size-5" />
                       ) : (
                         <Mic className="size-5" />
@@ -170,7 +181,11 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    {isRecording ? "Stop recording" : "Voice input"}
+                    {isTranscribing
+                      ? "Transcribing…"
+                      : isRecording
+                        ? "Stop recording"
+                        : "Voice input"}
                   </TooltipContent>
                 </Tooltip>
               )}

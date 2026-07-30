@@ -1,73 +1,80 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
-// Minimal typings for the Web Speech API (not in standard lib.dom).
-interface SpeechRecognitionResultLike {
-  0: { transcript: string };
-  isFinal: boolean;
-}
-interface SpeechRecognitionEventLike {
-  resultIndex: number;
-  results: { length: number; [index: number]: SpeechRecognitionResultLike };
-}
-interface SpeechRecognitionLike {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start: () => void;
-  stop: () => void;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((event: { error: string }) => void) | null;
-  onend: (() => void) | null;
-}
-type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+import { transcribeAudio } from "@/lib/api";
 
-function getRecognitionCtor(): SpeechRecognitionCtor | null {
-  if (typeof window === "undefined") return null;
-  const w = window as unknown as {
-    SpeechRecognition?: SpeechRecognitionCtor;
-    webkitSpeechRecognition?: SpeechRecognitionCtor;
-  };
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
-}
-
+/**
+ * Record with MediaRecorder, transcribe on our own backend.
+ *
+ * Replaces the previous Web Speech API implementation, which streamed audio to
+ * Google's servers and therefore could not work on the air-gapped deployment.
+ * `stopRecording()` resolves with the transcript so the caller decides what to
+ * do with it -- we never auto-send (WER on real speech is 5-15%).
+ */
 export function useVoiceInput() {
   const [isRecording, setIsRecording] = useState(false);
-  const [transcript, setTranscript] = useState("");
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const isSupported = getRecognitionCtor() !== null;
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
 
-  const stopRecording = useCallback(() => {
-    recognitionRef.current?.stop();
+  const isSupported =
+    typeof window !== "undefined" &&
+    typeof navigator !== "undefined" &&
+    !!navigator.mediaDevices?.getUserMedia &&
+    typeof MediaRecorder !== "undefined";
+
+  const startRecording = useCallback(async () => {
+    if (!isSupported || isRecording) return;
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      chunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      recorder.start();
+      recorderRef.current = recorder;
+      setIsRecording(true);
+    } catch {
+      // Permission denied, or no input device.
+      setError("Microphone blocked — allow access in your browser settings.");
+    }
+  }, [isSupported, isRecording]);
+
+  const stopRecording = useCallback(async (): Promise<string> => {
+    const recorder = recorderRef.current;
+    if (!recorder) return "";
+
+    const blob = await new Promise<Blob>((resolve) => {
+      recorder.onstop = () =>
+        resolve(new Blob(chunksRef.current, { type: recorder.mimeType }));
+      recorder.stop();
+    });
+    // Release the mic indicator in the browser chrome.
+    recorder.stream.getTracks().forEach((t) => t.stop());
+    recorderRef.current = null;
     setIsRecording(false);
+
+    if (blob.size === 0) return "";
+    setIsTranscribing(true);
+    try {
+      const { text } = await transcribeAudio(blob);
+      return text;
+    } catch {
+      setError("Transcription failed — try again.");
+      return "";
+    } finally {
+      setIsTranscribing(false);
+    }
   }, []);
 
-  const startRecording = useCallback(() => {
-    const Ctor = getRecognitionCtor();
-    if (!Ctor) return;
-    setTranscript("");
-    const recognition = new Ctor();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-
-    recognition.onresult = (event) => {
-      let text = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        text += event.results[i][0].transcript;
-      }
-      setTranscript(text);
-    };
-    recognition.onerror = () => setIsRecording(false);
-    recognition.onend = () => setIsRecording(false);
-
-    recognitionRef.current = recognition;
-    recognition.start();
-    setIsRecording(true);
-  }, []);
-
-  useEffect(() => {
-    return () => recognitionRef.current?.stop();
-  }, []);
-
-  return { isRecording, transcript, startRecording, stopRecording, isSupported };
+  return {
+    isRecording,
+    isTranscribing,
+    isSupported,
+    error,
+    startRecording,
+    stopRecording,
+  };
 }
