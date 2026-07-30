@@ -35,11 +35,15 @@ class FasterWhisperTranscriber:
             device = "cuda" if _cuda_available() else "cpu"
         compute = s.compute_type or ("float16" if device == "cuda" else "int8")
 
-        self.model = s.model
+        # A copied-in air-gapped model directory (STT_MODEL_DIR) takes precedence
+        # over the model name -- but /health should still report *something*
+        # meaningful, so surface the path an operator can recognize.
+        model_or_path = s.model_dir or s.model
+        self.model = model_or_path
         self.device = device
         self.vad = s.vad
         self.beam_size = s.beam_size
-        self._model = WhisperModel(s.model, device=device, compute_type=compute)
+        self._model = WhisperModel(model_or_path, device=device, compute_type=compute)
 
     def transcribe(self, samples: np.ndarray, language: str | None) -> str:
         segments, _ = self._model.transcribe(

@@ -193,8 +193,13 @@ uv run python ..\scripts\setup_stt_model.py
 ```
 
 Air-gapped hosts (no outbound internet at all): run the same command with
-`--manifest` on a connected machine, fetch the five listed files, and drop
-them into the directory named by `STT_MODEL_DIR` on the target.
+`--manifest` on a connected machine, fetch the five listed files (they are
+already a converted CTranslate2 model directory — `Systran/faster-whisper-*`
+is published pre-converted), drop them into one directory on the target, and
+set `STT_MODEL_DIR` to that directory in the voice service's environment.
+`STT_MODEL_DIR` takes precedence over `STT_MODEL` when set, and `/health`
+reports whichever one actually loaded — the directory path if you used it,
+the model name otherwise.
 
 Start the sidecar:
 

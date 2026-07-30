@@ -15,6 +15,9 @@ class Settings:
         self.language: str = os.environ.get("STT_LANGUAGE", "id")
         self.vad: bool = os.environ.get("STT_VAD", "true").lower() != "false"
         self.beam_size: int = int(os.environ.get("STT_BEAM_SIZE", "5"))
+        # Air-gapped hosts: a directory holding the converted CT2 model, copied in
+        # by hand (DEPLOY.md 3h). Takes precedence over `model` when set.
+        self.model_dir: str = os.environ.get("STT_MODEL_DIR", "")
 
 
 settings = Settings()
