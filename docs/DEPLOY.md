@@ -241,14 +241,20 @@ Start the sidecar:
 
 ```powershell
 cd backend\voice
-uv run uvicorn voice.service.main:app --host 0.0.0.0 --port 8002
+uv run uvicorn voice.service.main:app --app-dir .. --host 0.0.0.0 --port 8002
 ```
+
+`--app-dir ..` is required, not cosmetic. The sidecar's dependencies live in
+`backend\voice\.venv`, so `uv run` has to start from `backend\voice` — but the
+importable package root is `backend\`, because the module is `voice.service`.
+Drop the flag and uvicorn exits immediately with
+`ModuleNotFoundError: No module named 'voice'`, before it ever binds port 8002.
 
 Register it as a second NSSM service, `rag-voice`, alongside `rag-backend`:
 
 ```powershell
 nssm install rag-voice "C:\path\to\uv.exe"
-nssm set rag-voice AppParameters "run uvicorn voice.service.main:app --host 0.0.0.0 --port 8002"
+nssm set rag-voice AppParameters "run uvicorn voice.service.main:app --app-dir .. --host 0.0.0.0 --port 8002"
 nssm set rag-voice AppDirectory "C:\path\to\repo\backend\voice"
 nssm set rag-voice AppEnvironmentExtra "VIRTUAL_ENV="
 nssm start rag-voice

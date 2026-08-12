@@ -4,7 +4,12 @@ Runs on the GPU host, separate from the backend, so engine dependencies can
 churn without risking the backend's ability to start.
 
 Run locally:
-    cd backend/voice && uv run uvicorn voice.service.main:app --port 8002
+    cd backend/voice && uv run uvicorn voice.service.main:app --app-dir .. --port 8002
+
+`--app-dir ..` is not optional: the deps live in `backend/voice/.venv`, so uv has
+to run from here, but the package root is `backend/` (this is `voice.service`,
+and the tests import it by that name via pytest's `pythonpath = [".."]`).
+Without it uvicorn exits with `ModuleNotFoundError: No module named 'voice'`.
 
 Endpoints:
     POST /transcribe   — multipart audio -> text
