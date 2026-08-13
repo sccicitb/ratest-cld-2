@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 
 from app.chat.client import ModelChunk, ModelClient
 from app.chat.events import artifact, done, error, reasoning, step, token
+from app.chat.prompt import system_message
 from app.config import settings
 from app.models import ArtifactVersion, Attachment, ChatSession, Message
 from app.storage import open_blob
@@ -200,6 +201,13 @@ async def run_turn(
         current_content = _content(model_content or message, current_image_atts)
         messages = history + [{"role": "user", "content": current_content}]
         messages = _cap_images(messages, settings.max_vision_images_per_turn)
+        # Prepended after capping so `_cap_images` keeps operating on exactly
+        # the user/assistant turns it was written for. Index 0 for the rest of
+        # the turn: the loop only ever appends, so the persona still applies on
+        # the iteration that composes the post-tool answer.
+        sys_msg = system_message()
+        if sys_msg is not None:
+            messages = [sys_msg] + messages
 
         yield step("thinking", "active")
 

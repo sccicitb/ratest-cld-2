@@ -358,3 +358,76 @@ def test_run_turn_yields_reasoning_before_final_token(session_factory):
     assert "".join(e["content"] for e in token_events) == "Final answer."
     # reasoning arrives before the final answer token
     assert events.index(reasoning_events[0]) < events.index(token_events[0])
+
+
+# --- System prompt (Citya persona) ----------------------------------------
+
+
+def test_system_prompt_leads_every_model_call_including_after_a_tool(
+    session_factory, monkeypatch
+):
+    """The post-tool call is the one that writes KB-grounded answers.
+
+    A system message that only reached the first call would govern the opening
+    pass and then go missing exactly where the grounded answer is composed.
+    """
+    monkeypatch.setattr(settings, "system_prompt", None)
+    db, session = _make_session(session_factory)
+    model = _FakeModelClient([
+        [ModelChunk(type="tool_call", id="c1", name="fake_tool", arguments={"q": "x"})],
+        [ModelChunk(type="text", text="Jawaban akhir.")],
+    ])
+
+    asyncio.run(_collect(run_turn(
+        db=db, session=session, message="halo",
+        registry=_registry(_FakeTool()), model=model, ctx=_ctx(db, session),
+    )))
+
+    assert len(model.calls) == 2
+    for messages, _tools in model.calls:
+        assert messages[0]["role"] == "system"
+        assert "Citya" in messages[0]["content"]
+
+
+def test_system_prompt_is_never_persisted(session_factory, monkeypatch):
+    """It is re-applied per turn, so it must not reach the DB or the transcript."""
+    monkeypatch.setattr(settings, "system_prompt", None)
+    db, session = _make_session(session_factory)
+    model = _FakeModelClient([[ModelChunk(type="text", text="Halo!")]])
+
+    asyncio.run(_collect(run_turn(
+        db=db, session=session, message="halo",
+        registry=_registry(), model=model, ctx=_ctx(db, session),
+    )))
+
+    db.refresh(session)
+    assert [m.role for m in session.messages] == ["user", "assistant"]
+
+
+def test_system_prompt_empty_sends_no_system_message(session_factory, monkeypatch):
+    monkeypatch.setattr(settings, "system_prompt", "")
+    db, session = _make_session(session_factory)
+    model = _FakeModelClient([[ModelChunk(type="text", text="Halo!")]])
+
+    asyncio.run(_collect(run_turn(
+        db=db, session=session, message="halo",
+        registry=_registry(), model=model, ctx=_ctx(db, session),
+    )))
+
+    assert model.calls[0][0][0]["role"] == "user"
+
+
+def test_system_prompt_override_reaches_the_model(session_factory, monkeypatch):
+    monkeypatch.setattr(settings, "system_prompt", "Kamu adalah asisten uji coba.")
+    db, session = _make_session(session_factory)
+    model = _FakeModelClient([[ModelChunk(type="text", text="Halo!")]])
+
+    asyncio.run(_collect(run_turn(
+        db=db, session=session, message="halo",
+        registry=_registry(), model=model, ctx=_ctx(db, session),
+    )))
+
+    assert model.calls[0][0][0] == {
+        "role": "system",
+        "content": "Kamu adalah asisten uji coba.",
+    }
