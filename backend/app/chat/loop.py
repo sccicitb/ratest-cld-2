@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
@@ -35,6 +36,8 @@ from app.models import ArtifactVersion, Attachment, ChatSession, Message
 from app.storage import open_blob
 from app.tools.context import ToolContext
 from app.tools.registry import ToolError, ToolRegistry
+
+log = logging.getLogger(__name__)
 
 TITLE_MAX_LEN = 40
 
@@ -147,10 +150,31 @@ def _scope_label(ctx: ToolContext) -> str:
 async def _run_tool_call(
     name: str, args: dict, registry: ToolRegistry, ctx: ToolContext
 ) -> str:
+    """Run one tool call and always come back with a string for the model.
+
+    A tool failing is a normal event in a turn, not the end of one: the model
+    can apologise, try a different query, or answer from what it already has.
+    So every failure becomes a tool *result*.
+
+    Catching only ToolError was not enough. Tools reach out to Qdrant, a
+    sandbox, and arbitrary MCP servers, and only the disciplined ones convert
+    their transport failures (`search_knowledge_base` raised Qdrant's
+    `ResponseHandlingException` straight through). Anything uncaught here
+    unwinds the whole loop into the last-resort guard, and the user gets
+    "Chat turn failed" with no answer at all.
+
+    `except Exception` deliberately does not cover `asyncio.CancelledError`,
+    which is a BaseException — a cancelled turn must still cancel.
+    """
     try:
         return await registry.execute(name, args, ctx)
     except ToolError as exc:
         return f"Tool error: {exc}"
+    except Exception as exc:  # noqa: BLE001 — see docstring
+        # Unexpected: a tool that should have converted this and didn't. The
+        # model gets a usable result either way, but we want it in the log.
+        log.exception("tool %r raised an unconverted exception", name)
+        return f"Tool error: {type(exc).__name__}: {exc}"
 
 
 async def run_turn(
