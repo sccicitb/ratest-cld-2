@@ -243,6 +243,9 @@ class SupertonicEngine:
         self._tts = TTS(str(model_dir)) if model_dir else TTS(auto_download=True)
         self._style = self._tts.get_voice_style(voice_name=voice)
         self.load_seconds = time.perf_counter() - t0
+        # Instance-level so a voice sweep writes one directory per voice
+        # instead of ten runs overwriting each other.
+        self.key = f"supertonic-{voice}"
         self._steps = steps
         self._speed = speed
         self.model_mb = _dir_size_mb(model_dir) if model_dir else None
