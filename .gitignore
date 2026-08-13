@@ -22,3 +22,7 @@ __pycache__/
 /.superpowers/
 
 # Frontend artifacts are ignored by frontend/.gitignore
+
+# TTS probe artifacts: generated wavs + downloaded voice models (§1b A/B)
+backend/data/tts_samples/
+backend/data/tts_models/
