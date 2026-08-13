@@ -168,6 +168,133 @@ nssm set rag-backend AppEnvironmentExtra "VIRTUAL_ENV="
 nssm start rag-backend
 ```
 
+### 3h · Voice service (STT)
+
+Voice input is optional and lives entirely outside the main backend process: a
+separate FastAPI sidecar (`backend/voice/`) that transcribes audio and is
+called over HTTP. Leave `VOICE_SERVICE_URL` unset in `backend/.env` (§3b) and
+the app runs exactly as before, minus the mic button — nothing else changes.
+
+#### Prerequisite: CUDA 12 + cuDNN 9 (do this first)
+
+**The sidecar will not start on the GPU without these.** faster-whisper runs on
+CTranslate2, and our lockfile carries no `nvidia-*` wheels — CTranslate2 loads
+cuBLAS and cuDNN 9 from the *system*, not from the venv. With `STT_DEVICE`
+unset it defaults to `auto`, which selects CUDA the moment a device is visible,
+and `WhisperModel(...)` then fails loading `cudnn_*.dll`. That exception comes
+out of the sidecar's startup, so uvicorn exits and NSSM restarts it in a loop.
+
+On the Windows host, install:
+
+- **CUDA Toolkit 12.x** (`nvcc --version` should report 12.x)
+- **cuDNN 9 for CUDA 12** — copy its `bin\*.dll` next to the CUDA runtime, or
+  add its `bin` to the system `PATH`
+
+Then confirm the DLLs are actually resolvable by the service account NSSM runs
+as, not just by your interactive shell:
+
+```powershell
+nvidia-smi
+where cudnn64_9.dll cublas64_12.dll
+```
+
+If you need voice working before the CUDA side is sorted, set `STT_DEVICE=cpu`
+in the sidecar's environment. It starts and transcribes correctly — just far
+slower (int8 on CPU), which is a usable stopgap and a clean way to prove the
+rest of the wiring before blaming the GPU.
+
+Install the sidecar's own dependencies (it has its own `pyproject.toml`,
+separate from the backend's):
+
+```powershell
+cd backend\voice
+uv sync
+```
+
+Prefetch the faster-whisper model once per deploy, so the GPU host never
+hits HuggingFace at runtime — on an air-gapped host that means a hang and a
+failed transcription, not a slow download:
+
+```powershell
+cd backend\voice
+uv run python ..\scripts\setup_stt_model.py
+```
+
+Air-gapped hosts (no outbound internet at all): run the same command with
+`--manifest` on a connected machine, fetch the five listed files, drop them into
+one directory on the target, and set `STT_MODEL_DIR` to that directory in the
+voice service's environment. They are already a converted CTranslate2 model
+directory — these repos are published pre-converted, so there is no conversion
+step on either machine.
+
+Take the URLs from `--manifest` rather than constructing them: the repo is *not*
+a predictable `Systran/faster-whisper-<model>`. The default `large-v3-turbo`
+lives at `mobiuslabsgmbh/faster-whisper-large-v3-turbo` while `large-v3` is at
+`Systran/faster-whisper-large-v3`, and the script reads the same mapping the
+runtime uses, so the two cannot drift.
+
+`STT_MODEL_DIR` takes precedence over `STT_MODEL` when set, and `/health`
+reports whichever one actually loaded — the directory path if you used it,
+the model name otherwise.
+
+Start the sidecar:
+
+```powershell
+cd backend\voice
+uv run uvicorn voice.service.main:app --app-dir .. --host 0.0.0.0 --port 8002
+```
+
+`--app-dir ..` is required, not cosmetic. The sidecar's dependencies live in
+`backend\voice\.venv`, so `uv run` has to start from `backend\voice` — but the
+importable package root is `backend\`, because the module is `voice.service`.
+Drop the flag and uvicorn exits immediately with
+`ModuleNotFoundError: No module named 'voice'`, before it ever binds port 8002.
+
+Register it as a second NSSM service, `rag-voice`, alongside `rag-backend`:
+
+```powershell
+nssm install rag-voice "C:\path\to\uv.exe"
+nssm set rag-voice AppParameters "run uvicorn voice.service.main:app --app-dir .. --host 0.0.0.0 --port 8002"
+nssm set rag-voice AppDirectory "C:\path\to\repo\backend\voice"
+nssm set rag-voice AppEnvironmentExtra "VIRTUAL_ENV="
+nssm start rag-voice
+```
+
+Verify with:
+
+```powershell
+curl http://localhost:8002/health
+```
+
+`/health` reports the engine, model, and device that **actually loaded** — not
+just what you set in the environment. It answers even while a transcription is
+running, so it is a real liveness check, not a "is the GPU idle" check.
+
+What it does and does not catch:
+
+- **`STT_MODEL` typo** — you will not reach `/health` at all. An unrecognised
+  name raises at startup and the service exits (NSSM will keep restarting it);
+  nothing falls back to a default. Read the sidecar's log: the error names the
+  bad value and lists the valid ones.
+- **`STT_DEVICE`** — this is what `/health` is for. `auto` silently choosing
+  `cpu` because CUDA wasn't visible is a *working* service that is ~20x too
+  slow, and the `device` field is the only place that shows it.
+- **`STT_MODEL_DIR` vs `STT_MODEL`** — the `model` field tells you which one
+  won.
+
+Once it looks right, set `VOICE_SERVICE_URL=http://localhost:8002` in
+`backend/.env` and restart `rag-backend` to enable the mic button. The backend
+probes this `/health` once at startup and only reports `stt: true` to the
+frontend if it answered — so **order matters**: start `rag-voice` first, then
+restart `rag-backend`. If you set the URL while the sidecar is down, the mic
+stays hidden (by design, not a bug) until the next `rag-backend` restart.
+
+Two limits apply to every recording. `MAX_AUDIO_BYTES` (backend, 10 MiB) and
+`STT_MAX_AUDIO_SECONDS` (sidecar, 120) — the second is the one that matters,
+since Opus only reaches 10 MiB at around 40 minutes. The browser shows an
+elapsed timer and stops recording at 2:00 on its own; the sidecar rejects
+anything longer with `audio_too_long`.
+
 ---
 
 ## 4 · Cloudflare Tunnel Ingress

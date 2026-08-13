@@ -126,6 +126,19 @@ async def lifespan(app: FastAPI):
         session_factory=get_session_factory(),
         max_concurrent=settings.max_concurrent_chat_turns,
     )
+    # Voice sidecar reachability (spec §5): `/api/voice/capabilities` reports
+    # `stt: true` only when VOICE_SERVICE_URL is set AND /health answered, so the
+    # mic button never renders against a sidecar that isn't running. Probed once
+    # here rather than per request, and non-fatal by construction — probe_sidecar
+    # swallows its own errors, and this try is the belt to that braces.
+    from app.voice.routes import STT_READY_ATTR, probe_sidecar
+
+    try:
+        setattr(app.state, STT_READY_ATTR, await probe_sidecar())
+    except Exception:
+        log.exception("Voice sidecar probe raised — continuing with voice disabled.")
+        setattr(app.state, STT_READY_ATTR, False)
+
     try:
         _rdb = SessionLocal()
         try:
@@ -214,6 +227,7 @@ from app.admin.routes import router as admin_router  # noqa: E402
 from app.admin.groups import router as admin_groups_router  # noqa: E402
 from app.admin.mcp import router as admin_mcp_router  # noqa: E402
 from app.groups.routes import router as groups_router  # noqa: E402
+from app.voice.routes import router as voice_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
@@ -225,6 +239,7 @@ app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(admin_groups_router, prefix="/api/admin", tags=["admin"])
 app.include_router(admin_mcp_router, prefix="/api/admin", tags=["admin"])
 app.include_router(groups_router, prefix="/api/groups", tags=["groups"])
+app.include_router(voice_router, prefix="/api/voice", tags=["voice"])
 
 # SPA serving — opt-in; must be wired AFTER all /api routers (catch-all is last).
 _mount_spa(app)

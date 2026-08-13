@@ -63,6 +63,9 @@ package = false
 line-length = 100
 
 [tool.pytest.ini_options]
+# The voice sidecar (voice/tests) runs in its own env with its own deps --
+# `cd voice && uv run pytest` -- so it is excluded from backend discovery.
+testpaths = ["tests", "sandbox/tests"]
 filterwarnings = [
     "ignore:Payload indexes have no effect in the local Qdrant.*:UserWarning",
 ]

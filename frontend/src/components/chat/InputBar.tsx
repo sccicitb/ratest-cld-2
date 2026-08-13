@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Mic, MicOff, Paperclip, Square } from "lucide-react";
+import { ArrowUp, Loader2, Mic, MicOff, Paperclip, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,7 +13,8 @@ import {
   AttachmentPreview,
   type PendingAttachment,
 } from "@/components/chat/AttachmentPreview";
-import { useVoiceInput } from "@/hooks/useVoiceInput";
+import { formatElapsed, useVoiceInput } from "@/hooks/useVoiceInput";
+import { useVoiceCapabilities } from "@/lib/queries";
 import { cn, generateId, routeChatAttachment, SUPPORTED_FILE_TYPES } from "@/lib/utils";
 
 interface InputBarProps {
@@ -38,13 +39,26 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Append rather than replace: the user may have typed before recording.
+  const appendTranscript = (transcript: string) =>
+    setText((prev) => (prev ? `${prev} ${transcript}` : transcript));
   const {
     isRecording,
-    transcript,
+    isTranscribing,
+    isSupported: voiceSupported,
+    error: voiceError,
+    permissionDenied,
+    recordingSeconds,
+    maxRecordingSeconds,
     startRecording,
     stopRecording,
-    isSupported: voiceSupported,
-  } = useVoiceInput();
+  } = useVoiceInput({
+    // Reached only when the recording hit the cap and stopped itself — the
+    // transcript has nowhere else to go, since nobody awaited stopRecording().
+    onTranscript: appendTranscript,
+  });
+  const { data: voiceCaps } = useVoiceCapabilities();
+  const micEnabled = voiceSupported && !!voiceCaps?.stt;
 
   // Auto-grow the textarea.
   useEffect(() => {
@@ -54,10 +68,14 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [text]);
 
-  // Pipe voice transcript into the input.
-  useEffect(() => {
-    if (isRecording && transcript) setText(transcript);
-  }, [transcript, isRecording]);
+  const handleMic = async () => {
+    if (isRecording) {
+      const transcript = await stopRecording();
+      if (transcript) appendTranscript(transcript);
+    } else {
+      void startRecording();
+    }
+  };
 
   const addFiles = (files: FileList | null) => {
     if (!files) return;
@@ -92,7 +110,7 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
     onSend(trimmed, sendable.map((a) => a.file));
     setText("");
     setAttachments([]);
-    if (isRecording) stopRecording();
+    if (isRecording) void stopRecording();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -148,13 +166,14 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
                 <TooltipContent>Attach files</TooltipContent>
               </Tooltip>
 
-              {voiceSupported && (
+              {micEnabled && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={isRecording ? stopRecording : startRecording}
+                      onClick={handleMic}
+                      disabled={isTranscribing || permissionDenied}
                       aria-label={
                         isRecording ? "Stop recording" : "Start voice input"
                       }
@@ -162,7 +181,9 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
                         isRecording && "text-brand-red",
                       )}
                     >
-                      {isRecording ? (
+                      {isTranscribing ? (
+                        <Loader2 className="size-5 animate-spin" />
+                      ) : isRecording ? (
                         <MicOff className="size-5" />
                       ) : (
                         <Mic className="size-5" />
@@ -170,9 +191,34 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    {isRecording ? "Stop recording" : "Voice input"}
+                    {isTranscribing
+                      ? "Transcribing…"
+                      : permissionDenied
+                        ? "Microphone blocked"
+                        : isRecording
+                          ? "Stop recording"
+                          : "Voice input"}
                   </TooltipContent>
                 </Tooltip>
+              )}
+
+              {/* Elapsed timer (spec §6). Recording stops itself at the cap, so
+                  the countdown is shown too — the limit should be visible
+                  before it is hit, not explained afterwards. */}
+              {micEnabled && isRecording && (
+                <span
+                  role="timer"
+                  aria-label="Recording time"
+                  className={cn(
+                    "font-mono text-xs tabular-nums",
+                    maxRecordingSeconds - recordingSeconds <= 10
+                      ? "text-brand-red"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {formatElapsed(recordingSeconds)} /{" "}
+                  {formatElapsed(maxRecordingSeconds)}
+                </span>
               )}
             </div>
 
@@ -203,6 +249,11 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
             )}
           </div>
         </div>
+        {micEnabled && voiceError && (
+          <p className="px-2 pt-1.5 text-center text-xs text-destructive">
+            {voiceError}
+          </p>
+        )}
         <p className="px-2 pt-1.5 text-center text-xs text-muted-foreground">
           Enter to send · Shift+Enter for a new line
         </p>

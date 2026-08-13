@@ -120,3 +120,20 @@ export function useUpdateFileTags() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["kb-files"] }),
   });
 }
+
+// --- Voice ----------------------------------------------------------- //
+/** Shared so `useVoiceInput` can invalidate this exact query on a 503. */
+export const VOICE_CAPABILITIES_KEY = ["voice-capabilities"] as const;
+
+export function useVoiceCapabilities() {
+  return useQuery({
+    queryKey: VOICE_CAPABILITIES_KEY,
+    queryFn: api.getVoiceCapabilities,
+    // A sidecar doesn't *appear* mid-session — the backend probes /health once at
+    // startup — so there is nothing to poll for. But it can disappear, and then
+    // the mic must go with it: useVoiceInput invalidates this key when a
+    // transcription comes back stt_unavailable, which refetches despite the
+    // staleTime and drops the button.
+    staleTime: Infinity,
+  });
+}

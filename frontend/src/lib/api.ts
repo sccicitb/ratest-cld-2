@@ -406,3 +406,25 @@ export const changePassword = (data: ChangePasswordPayload): Promise<void> =>
 
 export const getMyGroups = (): Promise<Group[]> =>
   req("/api/groups/mine", { headers: authHeaders() }).then((r) => r.json());
+
+/* ------------------------------------------------------------------ */
+/*  Voice — local STT sidecar                                          */
+/* ------------------------------------------------------------------ */
+
+export const getVoiceCapabilities = (): Promise<{ stt: boolean }> =>
+  req("/api/voice/capabilities", { headers: authHeaders() }).then(r => r.json());
+
+export async function transcribeAudio(
+  blob: Blob,
+  language = "",
+): Promise<{ text: string; durationMs: number }> {
+  const form = new FormData();
+  form.append("audio", blob, "clip.webm");
+  if (language) form.append("language", language);
+  const res = await req("/api/voice/transcribe", {
+    method: "POST",
+    body: form,
+    headers: authHeaders(),
+  });
+  return res.json();
+}

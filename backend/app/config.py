@@ -99,6 +99,15 @@ class Settings(BaseSettings):
     code_exec_url: str = "http://localhost:8001"
     code_exec_timeout_seconds: float = 60
 
+    # --- Voice (§1a): STT sidecar. Empty disables the feature entirely, which
+    #     is how the 8 GB dev Mac runs without loading any model.
+    voice_service_url: str = ""
+    voice_timeout_seconds: float = 120
+    max_audio_bytes: int = 10 * 1024 * 1024   # 10 MiB
+    # Startup /health probe (spec §5). Short on purpose: a configured-but-dead
+    # sidecar must not add two minutes to every backend start.
+    voice_probe_timeout_seconds: float = 3
+
     # --- CORS: prod is same-origin (reverse proxy); this is dev split-origin
     #     convenience only (§2). ---
     cors_origins: list[str] = ["http://localhost:5173"]
