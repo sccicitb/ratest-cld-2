@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     # Max concurrent detached chat turns (I/O-bound on the model; generous).
     max_concurrent_chat_turns: int = 16
 
+    # --- System prompt (§7): the Citya persona + Indonesian rule.
+    #     None (unset) = the built-in default in app/chat/prompt.py.
+    #     A string     = replaces it.
+    #     Empty string = no system message at all, for comparing raw model
+    #                    behaviour against the persona without editing code.
+    system_prompt: str | None = None
+
     # --- Admin bootstrap (§M1) ---
     admin_email: str | None = None
     admin_password: str | None = None
