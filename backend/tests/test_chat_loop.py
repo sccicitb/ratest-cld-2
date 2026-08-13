@@ -401,6 +401,9 @@ def test_system_prompt_is_never_persisted(session_factory, monkeypatch):
     )))
 
     db.refresh(session)
+    # Guard against the tautology: without this, the test passes even with the
+    # feature deleted, since session.messages could never gain a system row.
+    assert model.calls[0][0][0]["role"] == "system"
     assert [m.role for m in session.messages] == ["user", "assistant"]
 
 

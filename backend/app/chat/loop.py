@@ -7,7 +7,7 @@ an SSE response.
 
 Locked algorithm — see `.superpowers/sdd/stage-5-brief.md` §7:
 1. Persist user `Message`; auto-title a "New Chat"; build OpenAI-shaped
-   `messages` from history + this turn; emit `thinking active`.
+   `messages` from `[system]` + history + this turn; emit `thinking active`.
 2. `model.stream(messages, registry.schemas())`.
 3. No tool calls -> stream the answer as `token`s (only on this kind of
    turn); break.

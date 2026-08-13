@@ -554,8 +554,9 @@ components, build the orchestration**. No LangChain/LangGraph (single-agent; rev
 this ever goes multi-agent).
 
 **Turn-by-turn** (an async generator yielding `StreamEvent`s):
-1. Persist user message; auto-title if `"New Chat"`; build `messages` (history +
-   this turn); ask the registry for enabled tool schemas. Emit `thinking active`.
+1. Persist user message; auto-title if `"New Chat"`; build `messages` (`[system]`
+   + history + this turn); ask the registry for enabled tool schemas. Emit
+   `thinking active`.
 2. **Call the model** (streaming) with `messages` + `tools`.
 3. Branch:
    - **No `tool_calls`** → final answer. Emit `thinking complete` →
