@@ -62,7 +62,15 @@ from pathlib import Path
 # The STT probe owns the Indonesian normalizer and the edit-distance scorers.
 # It has no heavy module-level imports, so this is safe in any of the envs above.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_stt_pipeline import cer, normalize, wer  # noqa: E402
+from check_stt_pipeline import (  # noqa: E402
+    _UNITS,
+    _spell_number_token,
+    cer,
+    normalize,
+    wer,
+)
+
+import re  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT_DIR = ROOT / "data" / "tts_samples"
@@ -129,6 +137,55 @@ TEXTS: list[Text] = [
     Text("11", "short", "Maaf, tidak ada hasil yang cocok."),
     Text("12", "short", "Ada yang bisa saya bantu?"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# TTS-side text normalization (the §1b front-end question)
+# ---------------------------------------------------------------------------
+
+_NUMBER_RE = re.compile(r"\d[\d.,]*")
+# The scale word must be swallowed with the amount: "Rp 2,3 miliar" is
+# "dua koma tiga MILIAR rupiah", not "dua koma tiga rupiah miliar". Written
+# Indonesian puts the currency marker first and the scale after the digits,
+# so a naive substitution straddles the scale word and says nonsense.
+_RUPIAH_RE = re.compile(
+    r"\bRp\.?\s*(\d[\d.,]*)(\s+(?:triliun|miliar|juta|ribu))?", re.IGNORECASE
+)
+
+
+def _spell_for_tts(tok: str) -> str:
+    """Spell one numeric token, keeping any trailing sentence punctuation.
+
+    Leading zeros are spoken digit by digit: "RT 03" is "RT nol tiga", not
+    "RT tiga" -- the zero is part of how the address is said aloud.
+    """
+    trail = ""
+    while tok and tok[-1] in ".,":
+        trail = tok[-1] + trail
+        tok = tok[:-1]
+    if not tok:
+        return trail
+    if tok.isdigit() and tok.startswith("0"):
+        return " ".join(_UNITS[int(d)] for d in tok) + trail
+    return _spell_number_token(tok) + trail
+
+
+def tts_normalize(text: str) -> str:
+    """Expand digits and `Rp` for synthesis, PRESERVING punctuation and case.
+
+    Deliberately not `check_stt_pipeline.normalize`, which lowercases and
+    strips punctuation. That is correct for scoring and wrong for speaking:
+    commas and full stops are where a TTS engine takes its breath, and
+    flattening them to score better would destroy the thing we are judging.
+
+    Scope is the tested hypothesis and nothing more -- numbers and currency.
+    Administrative abbreviations (RT/RW) are left alone on purpose, so the
+    rematch shows whether they were ever a number problem to begin with.
+    """
+    text = _RUPIAH_RE.sub(
+        lambda m: f"{_spell_for_tts(m.group(1))}{m.group(2) or ''} rupiah", text
+    )
+    return _NUMBER_RE.sub(lambda m: _spell_for_tts(m.group(0)), text)
 
 
 # ---------------------------------------------------------------------------
@@ -224,15 +281,18 @@ class SynthResult:
     x_realtime: float   # audio/proc. The same number the friendly way round.
 
 
-def run_synth(engine, texts: list[Text], out_dir: Path) -> list[SynthResult]:
-    engine_dir = out_dir / engine.key
+def run_synth(engine, texts: list[Text], out_dir: Path, normalize_numbers: bool = False) -> list[SynthResult]:
+    # A normalized run gets its own directory so it stands beside the raw run
+    # rather than overwriting the evidence it is being compared against.
+    engine_dir = out_dir / (f"{engine.key}-norm" if normalize_numbers else engine.key)
     engine_dir.mkdir(parents=True, exist_ok=True)
     results: list[SynthResult] = []
 
     for t in texts:
         out_path = engine_dir / f"{t.num}-{t.category}.wav"
+        spoken = tts_normalize(t.text) if normalize_numbers else t.text
         t0 = time.perf_counter()
-        engine.synthesize(t.text, out_path)
+        engine.synthesize(spoken, out_path)
         proc = time.perf_counter() - t0
         audio = wav_duration(out_path)
         results.append(SynthResult(
@@ -247,11 +307,21 @@ def run_synth(engine, texts: list[Text], out_dir: Path) -> list[SynthResult]:
     # The source text travels with the wavs so --score needs no arguments and
     # cannot drift from what was actually spoken.
     (engine_dir / "_manifest.json").write_text(json.dumps({
-        "engine": engine.key,
-        "detail": engine.detail,
+        "engine": engine.key + ("-norm" if normalize_numbers else ""),
+        "detail": engine.detail + (" +number-normalized" if normalize_numbers else ""),
         "load_seconds": round(engine.load_seconds, 2),
         "model_mb": engine.model_mb,
-        "texts": {t.num: {"category": t.category, "text": t.text} for t in texts},
+        # `text` stays the ORIGINAL -- it is what the user asked to hear, so it
+        # is the scoring reference. `spoken` records what the engine was
+        # actually fed, so a normalized run can be audited rather than trusted.
+        "texts": {
+            t.num: {
+                "category": t.category,
+                "text": t.text,
+                "spoken": tts_normalize(t.text) if normalize_numbers else t.text,
+            }
+            for t in texts
+        },
     }, ensure_ascii=False, indent=2))
     return results
 
@@ -348,6 +418,8 @@ def main() -> None:
     ap.add_argument("--voice", default="M1", help="Supertonic voice style (M1..M5, F1..F5)")
     ap.add_argument("--steps", type=int, default=8, help="Supertonic quality steps, 5-12")
     ap.add_argument("--speed", type=float, default=1.0)
+    ap.add_argument("--normalize-numbers", action="store_true",
+                    help="expand digits and Rp before synthesis (writes to <engine>-norm/)")
     ap.add_argument("--stt-model", default="large-v3-turbo", help="round-trip scorer")
     ap.add_argument("--json", type=Path, help="write raw results here")
     args = ap.parse_args()
@@ -371,12 +443,12 @@ def main() -> None:
         print(f"=== piper: {args.piper_model.name} ===")
         engine = PiperEngine(args.piper_model)
         print(f"loaded in {engine.load_seconds:.2f}s, model {engine.model_mb} MB")
-        payload["synth"] = [asdict(r) for r in run_synth(engine, texts, args.out_dir)]
+        payload["synth"] = [asdict(r) for r in run_synth(engine, texts, args.out_dir, args.normalize_numbers)]
     elif args.synth == "supertonic":
         print(f"=== supertonic: voice={args.voice} steps={args.steps} ===")
         engine = SupertonicEngine(args.supertonic_dir, args.voice, args.steps, args.speed)
         print(f"loaded in {engine.load_seconds:.2f}s, model {engine.model_mb or '?'} MB")
-        payload["synth"] = [asdict(r) for r in run_synth(engine, texts, args.out_dir)]
+        payload["synth"] = [asdict(r) for r in run_synth(engine, texts, args.out_dir, args.normalize_numbers)]
 
     if args.score:
         scores = run_score(args.out_dir, args.stt_model)
