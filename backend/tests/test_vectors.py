@@ -307,3 +307,30 @@ def test_update_file_payload_promotes_session_chunk_to_kb(
         session_id="other-session", caller_group_ids=[], k=5,
     )
     assert "file-session-1" in {r["file_id"] for r in results}
+
+
+# --- Fresh deployment: the collection does not exist yet ----------------------
+
+
+def test_search_on_a_missing_collection_returns_no_results(
+    qdrant: QdrantClient, embedder: Embedder
+):
+    """Nothing ingested yet is an empty KB, not an error.
+
+    `ensure_collection` runs on ingest, so between a fresh deploy (or the
+    collection delete in DEPLOY.md §7) and the first upload there is no
+    collection. `query_points` raises ValueError there, which is not a
+    ToolError, so it escaped the chat loop and killed the whole turn — the
+    model could not even answer "you have no documents indexed".
+
+    `delete_by_session` already guards this way; search did not.
+    """
+    hits = search(
+        qdrant,
+        embedder,
+        query="apa isi laporan penjualan",
+        user_id="u1",
+        session_id=None,
+        caller_group_ids=[],
+    )
+    assert hits == []

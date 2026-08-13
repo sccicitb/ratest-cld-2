@@ -212,3 +212,24 @@ def test_search_kb_scope_injected_from_ctx_not_args(
         tool.execute({"query": "quarterly revenue report", "session_id": session_id}, other_ctx)
     )
     assert "file-session-1" not in result
+
+
+def test_search_kb_converts_qdrant_transport_failure_to_tool_error(embedder: Embedder):
+    """A dead Qdrant is the model's problem to explain, not the turn's to die on.
+
+    `execute_code` already converts every transport failure into a ToolError;
+    this tool raised Qdrant's `ResponseHandlingException` straight through. The
+    chat loop now guards broadly as well, so this is defence in depth — but the
+    message the model receives should say what is actually unavailable.
+    """
+    dead = QdrantClient(url="http://127.0.0.1:1", timeout=1)
+    ctx = ToolContext(
+        user_id="user-1",
+        session_id="session-1",
+        db=None,
+        client=dead,
+        embedder=embedder,
+    )
+    with pytest.raises(ToolError) as excinfo:
+        asyncio.run(SearchKnowledgeBase().execute({"query": "anything"}, ctx))
+    assert "knowledge base" in str(excinfo.value).lower()

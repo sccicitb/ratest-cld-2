@@ -151,6 +151,13 @@ def search(
     k: int = 5,
     tags: list[str] | None = None,
 ) -> list[Chunk]:
+    # Nothing ingested yet is an empty KB, not a failure. `ensure_collection`
+    # runs on ingest, so a fresh deploy — or the collection delete in
+    # DEPLOY.md §7 — leaves no collection for `query_points` to read, and it
+    # raises ValueError rather than returning nothing. Guarded the same way
+    # `delete_by_session` already is.
+    if not client.collection_exists(COLLECTION):
+        return []
     emb = embedder.embed_query(query)
     scope_filter = _scope_filter(
         user_id=user_id, session_id=session_id, caller_group_ids=caller_group_ids

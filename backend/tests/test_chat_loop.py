@@ -358,3 +358,46 @@ def test_run_turn_yields_reasoning_before_final_token(session_factory):
     assert "".join(e["content"] for e in token_events) == "Final answer."
     # reasoning arrives before the final answer token
     assert events.index(reasoning_events[0]) < events.index(token_events[0])
+
+
+# --- Tool failures must not kill the turn ------------------------------------
+
+
+def test_run_turn_survives_a_tool_raising_a_non_toolerror(session_factory):
+    """A tool failing with anything other than ToolError must not end the turn.
+
+    Qdrant refusing a connection raises ResponseHandlingException and an
+    un-ingested collection raises ValueError — neither is a ToolError, so both
+    escaped `_run_tool_call`, unwound the loop, and hit the last-resort guard.
+    The user saw "Chat turn failed" and lost the answer the model could still
+    have given from what it already knew.
+    """
+    db, session = _make_session(session_factory)
+
+    class _ExplodingTool:
+        name = "fake_tool"
+
+        def schema(self) -> dict:
+            return {"type": "function", "function": {"name": "fake_tool"}}
+
+        async def execute(self, args: dict, ctx: ToolContext) -> str:
+            raise ConnectionRefusedError("[Errno 61] Connection refused")
+
+    model = _FakeModelClient([
+        [ModelChunk(type="tool_call", id="c1", name="fake_tool", arguments={"query": "x"})],
+        [ModelChunk(type="text", text="I could not reach the knowledge base.")],
+    ])
+
+    events = asyncio.run(_collect(run_turn(
+        db=db, session=session, message="what is in my docs?",
+        registry=_registry(_ExplodingTool()), model=model, ctx=_ctx(db, session),
+    )))
+
+    assert [e["type"] for e in events if e["type"] == "error"] == []
+    assert events[-1]["type"] == "done"
+
+    # The failure reached the model as a tool result, so it can say what broke.
+    final_messages = model.calls[-1][0]
+    tool_messages = [m for m in final_messages if m.get("role") == "tool"]
+    assert len(tool_messages) == 1
+    assert "Connection refused" in tool_messages[0]["content"]

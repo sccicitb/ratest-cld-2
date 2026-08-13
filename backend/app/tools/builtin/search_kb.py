@@ -11,6 +11,7 @@ from app.groups.service import group_ids_for
 from app.models import User
 from app.rag.retrieve import retrieve
 from app.tools.context import ToolContext
+from app.tools.registry import ToolError
 
 DEFAULT_K = 5
 
@@ -55,16 +56,23 @@ class SearchKnowledgeBase:
             caller_group_ids = group_ids_for(user) if user is not None else []
         else:
             caller_group_ids = []
-        chunks = retrieve(
-            query=query,
-            user_id=ctx.user_id,
-            session_id=ctx.session_id,
-            caller_group_ids=caller_group_ids,
-            client=ctx.client,
-            embedder=ctx.embedder,
-            k=DEFAULT_K,
-            tags=tags,
-        )
+        try:
+            chunks = retrieve(
+                query=query,
+                user_id=ctx.user_id,
+                session_id=ctx.session_id,
+                caller_group_ids=caller_group_ids,
+                client=ctx.client,
+                embedder=ctx.embedder,
+                k=DEFAULT_K,
+                tags=tags,
+            )
+        except Exception as exc:  # noqa: BLE001 — becomes a tool result, not a crash
+            # Qdrant being unreachable raises `ResponseHandlingException`, which
+            # is not a ToolError; before this it unwound the entire chat turn.
+            # Same discipline as `execute_code`: name what is unavailable so the
+            # model can tell the user rather than failing the whole answer.
+            raise ToolError(f"knowledge base unavailable: {exc}") from exc
         if not chunks:
             return "No matching documents found."
         parts = [
