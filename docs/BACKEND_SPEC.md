@@ -433,6 +433,18 @@ Mock: `mockStreamChat`. A **Server-Sent Events** stream that runs the model's
   data: {"type":"done","messageId":"msg_abc"}
   ```
 
+### Turn construction
+
+Every turn is assembled as `[system] + history + [user message]`. The system
+message carries the assistant's identity (**Citya**, an assistant for the city)
+and the standing instruction to answer in **Bahasa Indonesia** regardless of the
+language the user writes in.
+
+It is prepended per turn and **never persisted** as a message: it does not
+appear in `GET /api/sessions/:id/messages`, and changing it changes behaviour in
+existing conversations with no migration. `SYSTEM_PROMPT` overrides the built-in
+default; set empty, no system message is sent at all.
+
 ### The retrieval tool
 
 Define one tool and let the model decide when to call it. Use the
