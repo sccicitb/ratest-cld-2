@@ -22,6 +22,10 @@ router = APIRouter()
 #: Where the startup probe's verdict lives. Read by `capabilities`.
 STT_READY_ATTR = "voice_stt_ready"
 
+#: The voice styles the sidecar ships (§1b). Mirrors voice/service/tts.py --
+#: the backend cannot import from the sidecar's separate uv project.
+VOICES = ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"]
+
 
 async def get_http_client() -> AsyncIterator[httpx.AsyncClient]:
     """Dependency seam — tests override this with a MockTransport client

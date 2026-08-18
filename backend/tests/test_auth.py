@@ -117,3 +117,32 @@ def test_change_password_requires_auth(client):
         json={"oldPassword": "demo1234", "newPassword": "newpassword1"},
     )
     assert r.status_code == 401
+
+
+# --- Voice preference (§1b) --------------------------------------------------
+
+
+def test_new_user_defaults_to_f2(client, auth_headers):
+    body = client.get("/api/auth/me", headers=auth_headers).json()
+    assert body["voice"] == "F2"
+
+
+def test_patch_me_updates_the_voice(client, auth_headers):
+    resp = client.patch("/api/auth/me", json={"voice": "M2"}, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["voice"] == "M2"
+    assert client.get("/api/auth/me", headers=auth_headers).json()["voice"] == "M2"
+
+
+def test_patch_me_rejects_an_unknown_voice(client, auth_headers):
+    """The value reaches a filesystem path inside the TTS engine, so an
+    invalid one must never be persisted."""
+    resp = client.patch(
+        "/api/auth/me", json={"voice": "../../etc/passwd"}, headers=auth_headers
+    )
+    assert resp.status_code == 422
+    assert client.get("/api/auth/me", headers=auth_headers).json()["voice"] == "F2"
+
+
+def test_patch_me_requires_authentication(client):
+    assert client.patch("/api/auth/me", json={"voice": "M2"}).status_code == 401

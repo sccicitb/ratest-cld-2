@@ -42,8 +42,13 @@ class UserOut(CamelModel):
     avatar_url: str | None = None
     is_admin: bool = False
     disabled: bool = False
+    voice: str = "F2"
     created_at: datetime | None = None
     group_ids: list[str] = []
+
+
+class UpdateMeRequest(CamelModel):
+    voice: str
 
 
 class AuthResponse(CamelModel):

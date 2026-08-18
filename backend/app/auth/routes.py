@@ -11,7 +11,14 @@ from app.auth.deps import CurrentUser, DbSession
 from app.config import settings
 from app.errors import ApiError
 from app.models import RefreshToken, User
-from app.schemas import AuthResponse, ChangePasswordRequest, LoginRequest, UserOut
+from app.schemas import (
+    AuthResponse,
+    ChangePasswordRequest,
+    LoginRequest,
+    UpdateMeRequest,
+    UserOut,
+)
+from app.voice.routes import VOICES
 
 router = APIRouter()
 
@@ -106,6 +113,23 @@ def refresh(
 @router.get("/me", response_model=UserOut)
 def me(user: CurrentUser) -> UserOut:
     return UserOut.model_validate(user)
+
+
+@router.patch("/me", response_model=UserOut)
+def update_me(body: UpdateMeRequest, user: CurrentUser, db: DbSession) -> UserOut:
+    """Update the caller's own preferences.
+
+    `voice` is whitelisted rather than stored as given: it resolves to
+    `voice_styles/<name>.json` inside the TTS engine, so an arbitrary string
+    from a client is a path, not a label. The sidecar validates again on its
+    own -- it is separately reachable on its own port.
+    """
+    if body.voice not in VOICES:
+        raise ApiError(422, "unknown_voice", f"Unknown voice {body.voice!r}")
+    user.voice = body.voice
+    db.commit()
+    db.refresh(user)
+    return UserOut.model_validate(user, from_attributes=True)
 
 
 @router.post("/logout")
