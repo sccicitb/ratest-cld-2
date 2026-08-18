@@ -172,7 +172,7 @@ def test_capabilities_false_when_unconfigured(client, auth_headers, monkeypatch)
     resp = client.get("/api/voice/capabilities", headers=auth_headers)
 
     assert resp.status_code == 200
-    assert resp.json() == {"stt": False}
+    assert resp.json() == {"stt": False, "tts": False}
 
 
 def test_capabilities_reports_the_startup_probe_not_just_the_url(
@@ -188,13 +188,15 @@ def test_capabilities_reports_the_startup_probe_not_just_the_url(
                         raising=False)
 
     assert client.get("/api/voice/capabilities", headers=auth_headers).json() == {
-        "stt": False
+        "stt": False,
+        "tts": False,
     }
 
     monkeypatch.setattr(app.state, voice_routes.STT_READY_ATTR, True, raising=False)
 
     assert client.get("/api/voice/capabilities", headers=auth_headers).json() == {
-        "stt": True
+        "stt": True,
+        "tts": False,
     }
 
 
@@ -218,7 +220,7 @@ def _stub_probe(monkeypatch, response: httpx.Response | Exception) -> dict:
 def test_probe_is_false_when_unconfigured(monkeypatch):
     monkeypatch.setattr(settings, "voice_service_url", "")
 
-    assert asyncio.run(voice_routes.probe_sidecar()) is False
+    assert asyncio.run(voice_routes.probe_sidecar()) == (False, False)
 
 
 def test_probe_is_false_when_the_sidecar_is_not_running(monkeypatch):
@@ -227,19 +229,99 @@ def test_probe_is_false_when_the_sidecar_is_not_running(monkeypatch):
     monkeypatch.setattr(settings, "voice_service_url", "http://voice:8002")
     _stub_probe(monkeypatch, httpx.ConnectError("refused"))
 
-    assert asyncio.run(voice_routes.probe_sidecar()) is False
+    assert asyncio.run(voice_routes.probe_sidecar()) == (False, False)
 
 
 def test_probe_is_false_on_a_non_200_health(monkeypatch):
     monkeypatch.setattr(settings, "voice_service_url", "http://voice:8002")
     _stub_probe(monkeypatch, httpx.Response(503))
 
-    assert asyncio.run(voice_routes.probe_sidecar()) is False
+    assert asyncio.run(voice_routes.probe_sidecar()) == (False, False)
 
 
 def test_probe_is_true_when_health_answers(monkeypatch):
     monkeypatch.setattr(settings, "voice_service_url", "http://voice:8002")
     seen = _stub_probe(monkeypatch, httpx.Response(200, json={"status": "ok"}))
 
-    assert asyncio.run(voice_routes.probe_sidecar()) is True
+    # A sidecar with STT but no TTS block reports (True, False): the read
+    # button stays hidden rather than appearing and 502-ing.
+    assert asyncio.run(voice_routes.probe_sidecar()) == (True, False)
     assert seen["url"] == "http://voice:8002/health"
+
+
+def test_probe_reports_tts_when_health_advertises_it(monkeypatch):
+    monkeypatch.setattr(settings, "voice_service_url", "http://voice:8002")
+    _stub_probe(monkeypatch, httpx.Response(
+        200, json={"status": "ok", "tts": {"engine": "supertonic", "voices": ["F2"]}}
+    ))
+
+    assert asyncio.run(voice_routes.probe_sidecar()) == (True, True)
+
+
+# --- TTS proxy (§1b) ---------------------------------------------------------
+
+
+@pytest.fixture()
+def tts_sidecar(monkeypatch):
+    """Stub the sidecar's /synthesize, recording the forwarded JSON body."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        seen.update(_json.loads(request.content))
+        seen["url"] = str(request.url)
+        return httpx.Response(200, content=b"RIFFfake",
+                              headers={"content-type": "audio/wav"})
+
+    monkeypatch.setattr(settings, "voice_service_url", "http://voice:8002")
+    app.dependency_overrides[voice_routes.get_http_client] = lambda: httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    )
+    yield seen
+    app.dependency_overrides.pop(voice_routes.get_http_client, None)
+
+
+def test_speak_requires_auth(client):
+    assert client.post("/api/voice/speak", json={"text": "halo"}).status_code == 401
+
+
+def test_speak_forwards_the_users_stored_voice(client, auth_headers, tts_sidecar):
+    """The voice comes from the authenticated user, never from the request
+    body -- the same rule as ToolContext scope in §7."""
+    client.patch("/api/auth/me", json={"voice": "M3"}, headers=auth_headers)
+
+    resp = client.post(
+        "/api/voice/speak",
+        json={"text": "Dokumen ditemukan.", "voice": "M5"},  # ignored on purpose
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.content == b"RIFFfake"
+    assert tts_sidecar["voice"] == "M3"
+    assert tts_sidecar["text"] == "Dokumen ditemukan."
+    assert tts_sidecar["url"] == "http://voice:8002/synthesize"
+
+
+def test_speak_is_503_when_voice_is_not_configured(client, auth_headers, monkeypatch):
+    monkeypatch.setattr(settings, "voice_service_url", "")
+    resp = client.post("/api/voice/speak", json={"text": "halo"}, headers=auth_headers)
+    assert resp.status_code == 503
+    assert resp.json()["code"] == "tts_unavailable"
+
+
+def test_speak_rejects_text_over_the_backend_cap(client, auth_headers, tts_sidecar):
+    resp = client.post(
+        "/api/voice/speak",
+        json={"text": "a" * (settings.max_tts_chars + 1)},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 413
+    assert resp.json()["code"] == "text_too_long"
+
+
+def test_capabilities_reports_tts_from_the_probe(client, auth_headers):
+    client.app.state.voice_stt_ready = True
+    client.app.state.voice_tts_ready = True
+    body = client.get("/api/voice/capabilities", headers=auth_headers).json()
+    assert body == {"stt": True, "tts": True}

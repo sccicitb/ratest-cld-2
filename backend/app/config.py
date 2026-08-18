@@ -104,6 +104,9 @@ class Settings(BaseSettings):
     voice_service_url: str = ""
     voice_timeout_seconds: float = 120
     max_audio_bytes: int = 10 * 1024 * 1024   # 10 MiB
+    # §1b: cap on text sent for synthesis. The sidecar enforces its own limit
+    # too; this one stops a large body before it crosses the wire.
+    max_tts_chars: int = 5000
     # Startup /health probe (spec §5). Short on purpose: a configured-but-dead
     # sidecar must not add two minutes to every backend start.
     voice_probe_timeout_seconds: float = 3
