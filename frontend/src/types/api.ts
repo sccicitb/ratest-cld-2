@@ -4,6 +4,8 @@ export interface User {
   displayName: string;
   isAdmin: boolean;
   avatarUrl?: string;
+  /** TTS voice style (§1b). One of M1-M5 / F1-F5; defaults to F2. */
+  voice: string;
 }
 
 export interface AuthResponse {

@@ -411,7 +411,7 @@ export const getMyGroups = (): Promise<Group[]> =>
 /*  Voice — local STT sidecar                                          */
 /* ------------------------------------------------------------------ */
 
-export const getVoiceCapabilities = (): Promise<{ stt: boolean }> =>
+export const getVoiceCapabilities = (): Promise<{ stt: boolean; tts: boolean }> =>
   req("/api/voice/capabilities", { headers: authHeaders() }).then(r => r.json());
 
 export async function transcribeAudio(
@@ -428,3 +428,21 @@ export async function transcribeAudio(
   });
   return res.json();
 }
+
+/** Synthesize `text` with the caller's stored voice (§1b).
+ *  The voice is server-side scope -- there is deliberately no parameter. */
+export async function speakText(text: string): Promise<Blob> {
+  const res = await req("/api/voice/speak", {
+    method: "POST",
+    body: JSON.stringify({ text }),
+    headers: { ...JSON_H, ...authHeaders() },
+  });
+  return res.blob();
+}
+
+export const updateMe = (payload: { voice: string }): Promise<User> =>
+  req("/api/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+    headers: { ...JSON_H, ...authHeaders() },
+  }).then((r) => r.json());
