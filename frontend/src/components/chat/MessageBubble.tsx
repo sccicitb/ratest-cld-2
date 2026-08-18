@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { AuthedImage } from "@/components/chat/AuthedImage";
 import { useVoiceSynthesis } from "@/hooks/useVoiceSynthesis";
+import { useVoiceCapabilities } from "@/lib/queries";
 import { cn, formatFileSize } from "@/lib/utils";
 import type { Attachment, Message } from "@/types/chat";
 
@@ -62,6 +63,10 @@ export const MessageBubble = memo(function MessageBubble({
   message: Message;
 }) {
   const { speak, stop, isSpeaking, isSupported } = useVoiceSynthesis();
+  // Gated the same way the mic is: no sidecar, no button -- rather than a
+  // control that looks available and 503s (§1b spec, mirroring §1a).
+  const { data: voiceCaps } = useVoiceCapabilities();
+  const canRead = isSupported && !!voiceCaps?.tts;
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
 
@@ -126,7 +131,7 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         )}
 
-        {!isUser && isSupported && message.content && (
+        {!isUser && canRead && message.content && (
           <Button
             variant="ghost"
             size="sm"

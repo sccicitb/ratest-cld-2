@@ -19,18 +19,23 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import logging
+import wave
 
-from fastapi import Depends, FastAPI, Form, UploadFile
-from fastapi.responses import JSONResponse
+import numpy as np
+from fastapi import Body, Depends, FastAPI, Form, UploadFile
+from fastapi.responses import JSONResponse, Response
 
 from .audio import decode_audio
 from .config import settings
 from .engines import Transcriber, build_transcriber
+from .tts import DEFAULT_VOICE, Synthesizer, build_synthesizer
 
 log = logging.getLogger(__name__)
 
 _transcriber: Transcriber | None = None
+_synthesizer: Synthesizer | None = None
 
 # One in-flight transcription at a time, enforced explicitly.
 #
@@ -49,16 +54,19 @@ _engine_slot: asyncio.Semaphore | None = None
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
     """Load the model once, at startup -- never per request."""
-    global _transcriber, _engine_slot
+    global _transcriber, _engine_slot, _synthesizer
     _engine_slot = asyncio.Semaphore(1)
     _transcriber = build_transcriber(settings)
     log.info(
         "voice: loaded %s / %s on %s",
         _transcriber.name, _transcriber.model, _transcriber.device,
     )
+    _synthesizer = build_synthesizer(settings)
+    log.info("voice: loaded TTS %s / %s", _synthesizer.name, _synthesizer.model)
     yield
     _transcriber = None
     _engine_slot = None
+    _synthesizer = None
 
 
 app = FastAPI(title="Voice Service", version="0.1.0", lifespan=lifespan)
@@ -78,6 +86,13 @@ def get_transcriber() -> Transcriber:
     return _transcriber
 
 
+def get_synthesizer() -> Synthesizer:
+    """Mirror of get_transcriber -- see its docstring for why the real test
+    seam is patching build_synthesizer, not overriding this."""
+    assert _synthesizer is not None, "synthesizer not initialised"
+    return _synthesizer
+
+
 def get_engine_slot() -> asyncio.Semaphore:
     """The single-slot guard around the engine (see `_engine_slot`)."""
     assert _engine_slot is not None, "engine slot not initialised"
@@ -85,14 +100,23 @@ def get_engine_slot() -> asyncio.Semaphore:
 
 
 @app.get("/health")
-def health(t: Transcriber = Depends(get_transcriber)) -> dict:
+def health(
+    t: Transcriber = Depends(get_transcriber),
+    s: Synthesizer = Depends(get_synthesizer),
+) -> dict:
     """Liveness. Deliberately does NOT wait on the engine slot.
 
     A busy GPU is not a dead service: if /health blocked behind a transcription,
     liveness monitoring (and NSSM) would read "down" during entirely normal work
     and restart the process mid-request.
     """
-    return {"status": "ok", "engine": t.name, "model": t.model, "device": t.device}
+    return {
+        "status": "ok",
+        "engine": t.name,
+        "model": t.model,
+        "device": t.device,
+        "tts": {"engine": s.name, "model": s.model, "voices": s.voices},
+    }
 
 
 @app.post("/transcribe")
@@ -138,3 +162,39 @@ async def transcribe(
         "engine": t.name,
         "model": t.model,
     }
+
+
+@app.post("/synthesize")
+async def synthesize(
+    payload: dict = Body(...),
+    s: Synthesizer = Depends(get_synthesizer),
+    slot: asyncio.Semaphore = Depends(get_engine_slot),
+):
+    text = (payload.get("text") or "").strip()
+    voice = payload.get("voice") or DEFAULT_VOICE
+    if not text:
+        return JSONResponse({"message": "text is required", "code": "text_required"},
+                            status_code=422)
+    # Both checks run BEFORE the engine slot: a rejected request must never
+    # occupy the engine the chat model is sharing a GPU with.
+    if len(text) > settings.tts_max_chars:
+        return JSONResponse(
+            {"message": f"Text is {len(text)} characters; the limit is "
+                        f"{settings.tts_max_chars}", "code": "text_too_long"},
+            status_code=413,
+        )
+    if voice not in s.voices:
+        return JSONResponse({"message": f"Unknown voice {voice!r}",
+                             "code": "unknown_voice"}, status_code=422)
+
+    async with slot:
+        samples, rate = await asyncio.to_thread(s.synthesize, text, voice)
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(rate)
+        clipped = np.clip(np.asarray(samples, dtype=np.float32), -1.0, 1.0)
+        wf.writeframes((clipped * 32767).astype("<i2").tobytes())
+    return Response(content=buf.getvalue(), media_type="audio/wav")

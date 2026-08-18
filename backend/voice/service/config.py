@@ -26,5 +26,14 @@ class Settings:
             os.environ.get("STT_MAX_AUDIO_SECONDS", "120")
         )
 
+        # --- TTS (§1b) ---
+        self.tts_engine: str = os.environ.get("TTS_ENGINE", "supertonic")
+        self.tts_model_dir: str = os.environ.get("TTS_MODEL_DIR", "")
+        self.tts_steps: int = int(os.environ.get("TTS_STEPS", "8"))
+        self.tts_speed: float = float(os.environ.get("TTS_SPEED", "1.0"))
+        # A very long answer is a multi-second GPU hold at RTF ~0.2. The
+        # sidecar is the only component that knows the real cost.
+        self.tts_max_chars: int = int(os.environ.get("TTS_MAX_CHARS", "5000"))
+
 
 settings = Settings()

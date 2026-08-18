@@ -131,13 +131,16 @@ async def lifespan(app: FastAPI):
     # mic button never renders against a sidecar that isn't running. Probed once
     # here rather than per request, and non-fatal by construction — probe_sidecar
     # swallows its own errors, and this try is the belt to that braces.
-    from app.voice.routes import STT_READY_ATTR, probe_sidecar
+    from app.voice.routes import STT_READY_ATTR, TTS_READY_ATTR, probe_sidecar
 
     try:
-        setattr(app.state, STT_READY_ATTR, await probe_sidecar())
+        stt_ready, tts_ready = await probe_sidecar()
+        setattr(app.state, STT_READY_ATTR, stt_ready)
+        setattr(app.state, TTS_READY_ATTR, tts_ready)
     except Exception:
         log.exception("Voice sidecar probe raised — continuing with voice disabled.")
         setattr(app.state, STT_READY_ATTR, False)
+        setattr(app.state, TTS_READY_ATTR, False)
 
     try:
         _rdb = SessionLocal()

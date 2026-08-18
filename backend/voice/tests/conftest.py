@@ -48,13 +48,39 @@ class FakeTranscriber:
                 self._in_flight -= 1
 
 
+class FakeSynthesizer:
+    """Returns a fixed tone; records what it was asked to say."""
+
+    name = "fake-tts"
+    model = "fake-tts-model"
+
+    def __init__(self) -> None:
+        from voice.service.tts import VOICES
+
+        self.voices = list(VOICES)
+        self.calls: list[tuple[str, str]] = []
+
+    def synthesize(self, text: str, voice: str):
+        if voice not in self.voices:
+            raise ValueError(f"unknown voice: {voice!r}")
+        self.calls.append((text, voice))
+        return np.zeros(4410, dtype=np.float32), 44_100
+
+
+@pytest.fixture()
+def fake_tts() -> "FakeSynthesizer":
+    return FakeSynthesizer()
+
+
 @pytest.fixture()
 def fake() -> FakeTranscriber:
     return FakeTranscriber()
 
 
 @pytest.fixture()
-def client(fake: FakeTranscriber, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def client(
+    fake: FakeTranscriber, fake_tts: FakeSynthesizer, monkeypatch: pytest.MonkeyPatch
+) -> TestClient:
     # lifespan() calls build_transcriber(settings) directly -- a plain function
     # call, not a Depends() -- so overriding get_transcriber alone leaves the
     # real engine construction on the table when TestClient(...) enters and
@@ -64,6 +90,11 @@ def client(fake: FakeTranscriber, monkeypatch: pytest.MonkeyPatch) -> TestClient
     # Kept as well: guards route-level Depends(get_transcriber) resolution
     # directly, independent of what lifespan did.
     service_main.app.dependency_overrides[service_main.get_transcriber] = lambda: fake
+    # Same reasoning as build_transcriber: lifespan calls build_synthesizer
+    # directly, so patching the dependency alone would still download and
+    # load a real 385 MB model at TestClient startup.
+    monkeypatch.setattr(service_main, "build_synthesizer", lambda settings: fake_tts)
+    service_main.app.dependency_overrides[service_main.get_synthesizer] = lambda: fake_tts
     with TestClient(service_main.app) as c:
         yield c
     service_main.app.dependency_overrides.clear()

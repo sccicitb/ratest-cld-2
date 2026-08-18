@@ -82,6 +82,8 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # §1b: TTS voice style. Server default so existing rows need no backfill.
+    voice: Mapped[str] = mapped_column(String, default="F2", server_default="F2")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     # M2: membership — resolved lazily; Group defined below

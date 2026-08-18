@@ -9,7 +9,8 @@ import logging
 from typing import AsyncIterator
 
 import httpx
-from fastapi import APIRouter, Depends, Form, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, Form, Request, UploadFile
+from fastapi.responses import Response
 
 from app.auth.deps import get_current_user
 from app.config import settings
@@ -21,6 +22,13 @@ router = APIRouter()
 
 #: Where the startup probe's verdict lives. Read by `capabilities`.
 STT_READY_ATTR = "voice_stt_ready"
+
+#: Where the startup probe's TTS verdict lives.
+TTS_READY_ATTR = "voice_tts_ready"
+
+#: The voice styles the sidecar ships (§1b). Mirrors voice/service/tts.py --
+#: the backend cannot import from the sidecar's separate uv project.
+VOICES = ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"]
 
 
 async def get_http_client() -> AsyncIterator[httpx.AsyncClient]:
@@ -40,7 +48,7 @@ def _probe_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=settings.voice_probe_timeout_seconds)
 
 
-async def probe_sidecar() -> bool:
+async def probe_sidecar() -> tuple[bool, bool]:
     """Did the sidecar's /health answer? Called once, from the backend's lifespan.
 
     Spec §5: `stt` is true when VOICE_SERVICE_URL is set **and** /health
@@ -53,21 +61,26 @@ async def probe_sidecar() -> bool:
     starting; the failure mode is "no mic button", not "no app".
     """
     if not settings.voice_service_url:
-        return False
+        return False, False
     url = f"{settings.voice_service_url}/health"
     try:
         async with _probe_client() as hc:
             resp = await hc.get(url)
     except Exception as exc:
         log.warning("Voice sidecar probe failed (%s) — mic disabled: %s", url, exc)
-        return False
+        return False, False
     if resp.status_code != 200:
         log.warning(
             "Voice sidecar %s answered %s — mic disabled", url, resp.status_code
         )
-        return False
-    log.info("Voice sidecar ready at %s", settings.voice_service_url)
-    return True
+        return False, False
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {}
+    tts_ready = bool(isinstance(body, dict) and body.get("tts"))
+    log.info("Voice sidecar ready at %s (tts=%s)", settings.voice_service_url, tts_ready)
+    return True, tts_ready
 
 
 @router.get("/capabilities")
@@ -78,7 +91,10 @@ def capabilities(request: Request, _=Depends(get_current_user)) -> dict:
     is called on every chat page load, and a per-request round-trip to the
     sidecar would put its latency in front of the composer rendering.
     """
-    return {"stt": bool(getattr(request.app.state, STT_READY_ATTR, False))}
+    return {
+        "stt": bool(getattr(request.app.state, STT_READY_ATTR, False)),
+        "tts": bool(getattr(request.app.state, TTS_READY_ATTR, False)),
+    }
 
 
 #: Codes the sidecar is allowed to speak in its own voice. A 4xx from the sidecar
@@ -139,3 +155,53 @@ async def transcribe(
 
     body = resp.json()
     return {"text": body.get("text", ""), "durationMs": body.get("durationMs", 0)}
+
+
+#: Same reasoning as _SIDECAR_CLIENT_CODES, for the synthesis path.
+_TTS_CLIENT_CODES = {"text_too_long", "unknown_voice", "text_required"}
+
+
+def _tts_sidecar_error(resp: httpx.Response) -> ApiError:
+    if 400 <= resp.status_code < 500:
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {}
+        code = body.get("code") if isinstance(body, dict) else None
+        if code in _TTS_CLIENT_CODES:
+            message = (body.get("message") if isinstance(body, dict) else None) or code
+            return ApiError(resp.status_code, code, str(message))
+    return ApiError(502, "tts_failed", f"Voice service error {resp.status_code}")
+
+
+@router.post("/speak")
+async def speak(
+    body: dict = Body(...),
+    user=Depends(get_current_user),
+    hc: httpx.AsyncClient = Depends(get_http_client),
+):
+    if not settings.voice_service_url:
+        raise ApiError(503, "tts_unavailable", "Text-to-speech is not configured")
+
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise ApiError(422, "text_required", "text is required")
+    if len(text) > settings.max_tts_chars:
+        raise ApiError(413, "text_too_long",
+                       f"Text exceeds {settings.max_tts_chars} characters")
+
+    # The voice is the caller's stored preference. A `voice` in the request
+    # body is ignored: this is server-controlled scope, like ToolContext.
+    try:
+        resp = await hc.post(
+            f"{settings.voice_service_url}/synthesize",
+            json={"text": text, "voice": user.voice},
+        )
+    except httpx.TimeoutException as exc:
+        raise ApiError(504, "tts_timeout", "Synthesis timed out") from exc
+    except httpx.RequestError as exc:
+        raise ApiError(503, "tts_unavailable", f"Voice service unavailable: {exc}") from exc
+
+    if resp.status_code >= 400:
+        raise _tts_sidecar_error(resp)
+    return Response(content=resp.content, media_type="audio/wav")
