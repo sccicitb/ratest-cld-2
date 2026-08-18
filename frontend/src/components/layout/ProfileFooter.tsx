@@ -1,6 +1,8 @@
 import { useState } from "react";
+
+import { VoiceDialog } from "@/components/layout/VoiceDialog";
 import { useNavigate } from "react-router";
-import { KeyRound, LogOut, Settings } from "lucide-react";
+import { KeyRound, LogOut, Settings, Volume2 } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -33,6 +35,7 @@ export function ProfileFooter({ collapsed }: { collapsed?: boolean }) {
   const changePasswordMutation = useChangePassword();
 
   const [changePwOpen, setChangePwOpen] = useState(false);
+  const [voiceOpen, setVoiceOpen] = useState(false);
   const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [pwError, setPwError] = useState<string | null>(null);
@@ -100,6 +103,10 @@ export function ProfileFooter({ collapsed }: { collapsed?: boolean }) {
             <Settings />
             Settings
           </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setVoiceOpen(true)}>
+            <Volume2 />
+            Voice
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={openChangePw}>
             <KeyRound />
             Change password
@@ -110,6 +117,8 @@ export function ProfileFooter({ collapsed }: { collapsed?: boolean }) {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <VoiceDialog open={voiceOpen} onOpenChange={setVoiceOpen} />
 
       {/* Change-password dialog */}
       <Dialog open={changePwOpen} onOpenChange={(o) => !o && setChangePwOpen(false)}>
