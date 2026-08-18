@@ -237,6 +237,42 @@ runtime uses, so the two cannot drift.
 reports whichever one actually loaded — the directory path if you used it,
 the model name otherwise.
 
+#### TTS models (read-aloud)
+
+Read-aloud runs in this same sidecar — there is no second service. The engine
+is Supertonic 3 (one 99M model covering 31 languages including Indonesian),
+about **383 MB** on disk; `vector_estimator.onnx` alone is 257 MB.
+
+Provision it once per deploy:
+
+```powershell
+cd backend
+uv run --with huggingface-hub python scripts/setup_tts_models.py --dest ..\tts_models
+```
+
+Then set `TTS_MODEL_DIR` to that directory in the voice service's environment.
+Air-gapped hosts: run the same command with `--manifest` on a connected
+machine, fetch the 17 listed files, and copy the directory across preserving
+its `onnx/` and `voice_styles/` layout.
+
+With `TTS_MODEL_DIR` set the sidecar loads with `auto_download=False`, so an
+incomplete directory fails loudly at startup instead of quietly reaching for
+the network — which on this host would hang rather than succeed.
+
+`/health` grows a `tts` object reporting the engine and **the voices that
+actually loaded**, not the ten it hopes shipped:
+
+```json
+{"status":"ok","engine":"faster-whisper","tts":{"engine":"supertonic","voices":["M1","M2","M3","M4","M5","F1","F2","F3","F4","F5"]}}
+```
+
+A short `voices` list means the provisioning directory is incomplete. The
+backend reports `tts: false` in `/api/voice/capabilities` whenever that object
+is missing, and the read button stays hidden.
+
+Each user picks their own voice from the profile menu; new accounts default to
+`F2`.
+
 Start the sidecar:
 
 ```powershell

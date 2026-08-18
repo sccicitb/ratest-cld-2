@@ -117,14 +117,29 @@ class SupertonicSynthesizer:
         from supertonic import TTS
 
         self.model = s.tts_model_dir or "supertonic-3"
-        self.voices = list(VOICES)
         self._steps = s.tts_steps
         self._speed = s.tts_speed
-        self._tts = TTS(s.tts_model_dir) if s.tts_model_dir else TTS(auto_download=True)
+        # `model_dir` is a keyword, and the first positional argument is a model
+        # NAME -- passing a path there fails with "Invalid model". auto_download
+        # is off for the air-gapped path on purpose: a provisioning gap must
+        # fail loudly at startup, not silently reach for the network.
+        self._tts = (
+            TTS(model_dir=s.tts_model_dir, auto_download=False)
+            if s.tts_model_dir
+            else TTS(auto_download=True)
+        )
         # Styles are resolved once at load: doing it per request would put a
         # file read in front of every synthesis, and it is also the second
         # place an unknown voice would reach the filesystem.
-        self._styles = {v: self._tts.get_voice_style(voice_name=v) for v in VOICES}
+        #
+        # `voices` reports what actually loaded rather than what we hope shipped
+        # (spec §3.4), so an incomplete provisioning directory shows up as a
+        # missing voice in /health instead of a 500 on first use.
+        available = set(getattr(self._tts, "voice_style_names", None) or VOICES)
+        self._styles = {
+            v: self._tts.get_voice_style(voice_name=v) for v in VOICES if v in available
+        }
+        self.voices = sorted(self._styles, key=VOICES.index)
 
     def synthesize(self, text: str, voice: str) -> tuple[np.ndarray, int]:
         if voice not in self._styles:
@@ -136,7 +151,12 @@ class SupertonicSynthesizer:
             total_steps=self._steps,
             speed=self._speed,
         )
-        return wav, 44_100
+        # The library returns shape (1, N), not (N,). Flattened here so the
+        # protocol's contract is genuinely 1-D mono: the WAV writer only
+        # produced correct audio because tobytes() happens to flatten
+        # row-major, which would silently interleave if this ever became
+        # (2, N).
+        return np.asarray(wav, dtype=np.float32).reshape(-1), 44_100
 
 
 def build_synthesizer(s: Settings) -> Synthesizer:
