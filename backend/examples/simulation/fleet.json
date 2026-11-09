@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "1",
+  "title": "Simulasi kapasitas armada — data sintetis",
+  "objective": "Membandingkan kapasitas harian setelah penambahan armada",
+  "parameters": [
+    {
+      "id": "fleet",
+      "label": "Jumlah armada",
+      "unit": "armada",
+      "baselineValue": 10,
+      "minimum": 0,
+      "maximum": 100,
+      "origin": {"kind": "synthetic", "description": "Angka contoh, bukan data OPD"}
+    },
+    {
+      "id": "capacity",
+      "label": "Kapasitas per armada",
+      "unit": "ton/hari/armada",
+      "baselineValue": 5,
+      "minimum": 0,
+      "origin": {"kind": "synthetic", "description": "Angka contoh, bukan data OPD"}
+    }
+  ],
+  "outputs": [
+    {
+      "id": "total",
+      "label": "Kapasitas total",
+      "unit": "ton/hari",
+      "expression": "fleet * capacity"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "add_two",
+      "label": "Tambah dua armada",
+      "overrides": {
+        "fleet": {
+          "value": 12,
+          "origin": {"kind": "user_input", "description": "Target skenario contoh"}
+        }
+      }
+    },
+    {
+      "id": "add_five",
+      "label": "Tambah lima armada",
+      "overrides": {
+        "fleet": {
+          "value": 15,
+          "origin": {"kind": "user_input", "description": "Target skenario contoh"}
+        }
+      }
+    }
+  ],
+  "assumptions": ["Kapasitas setiap armada sama dan tenaga kerja mencukupi"],
+  "limitations": ["Belum memperhitungkan rute, downtime, dan kapasitas fasilitas"]
+}
