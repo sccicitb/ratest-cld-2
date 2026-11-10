@@ -75,6 +75,11 @@ demo1234**.
 - **Code execution:** *"Use code to compute the mean and std of [10,20,30,40,50]"*
   → the model calls `execute_code` and runs it in the sandbox.
 - **MCP (if #5 up):** *"Search the Garut open-data catalog for population datasets."*
+- **Structured simulation:** *"Gunakan data sintetis: 10 armada dengan kapasitas
+  masing-masing 5 ton/hari. Asumsikan tenaga kerja mencukupi. Simulasikan penambahan
+  2 dan 5 armada menggunakan run_simulation."* → model calls the arithmetic engine;
+  expected totals are 50 (baseline), 60 and 75 ton/day. This tool does not need the
+  code-exec service. See [simulation setup, examples and limits](app/simulation/README.md).
 
 > Note: `execute_code` can generate charts, but rich/artifact output isn't
 > rendered in the UI yet (deferred per spec) — the model will mention a chart

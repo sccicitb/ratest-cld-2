@@ -18,11 +18,11 @@ and prepending it to the message sent to the model.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 
 from app.auth.deps import CurrentUser, DbSession
@@ -33,6 +33,7 @@ from app.kb.routes import get_embedder_dep, get_qdrant
 from app.models import Attachment, ChatSession
 from app.rag.embedder import Embedder
 from app.rag.extract import extract_text
+from app.simulation.schemas import SimulationModel
 from app.sse import sse
 
 router = APIRouter()
@@ -49,8 +50,14 @@ def get_chat_turns(request: Request) -> ChatTurnRegistry:
 ChatTurnsDep = Annotated[ChatTurnRegistry, Depends(get_chat_turns)]
 
 
+class SimulationSelection(SimulationModel):
+    question_id: str = Field(min_length=1, max_length=64)
+    option_id: Literal["baseline", "last_scenario"]
+
+
 class ChatRequest(BaseModel):
     message: str
+    simulation_selection: SimulationSelection | None = Field(default=None, alias="simulationSelection")
     attachments: list[dict[str, Any]] | None = None
 
 
@@ -75,7 +82,18 @@ async def chat(
     # `chat_turns.spawn()` calls `asyncio.create_task()` and needs one — the
     # same reason `kb/routes.py::upload_file` (which calls `ingest_jobs.spawn()`)
     # is `async def` too.
-    _owned(db, user.id, session_id)
+    session = _owned(db, user.id, session_id)
+    if body.simulation_selection:
+        pending = (session.simulation_state or {}).get("pending")
+        selection = body.simulation_selection
+        if not pending or pending["id"] != selection.question_id:
+            raise ApiError(
+                409, "stale_clarification", "Pilihan sudah tidak aktif; gunakan klarifikasi terbaru."
+            )
+        option = next((o for o in pending["options"] if o["id"] == selection.option_id), None)
+        if option is None:
+            raise ApiError(400, "invalid_option", "Pilihan tidak dikenal.")
+        body.message = option["label"]
 
     # --- Stage 6: split display content (persisted/shown) from model content -
     # The user's bubble shows `body.message`; the model additionally sees the
@@ -103,6 +121,12 @@ async def chat(
         if inline_blocks:
             model_content = "\n\n---\n\n".join(inline_blocks) + f"\n\n---\n\n{body.message}"
 
+    selection_args = {}
+    if body.simulation_selection:
+        selection_args["simulation_selection"] = {
+            "questionId": body.simulation_selection.question_id,
+            "reference": body.simulation_selection.option_id,
+        }
     try:
         chat_turns.spawn(
             session_id,
@@ -110,6 +134,7 @@ async def chat(
             message=body.message,
             model_content=model_content,
             attachment_ids=attachment_ids,
+            **selection_args,
         )
     except TurnInProgress:
         raise ApiError(409, "turn_in_progress", "This chat already has a reply in progress")
@@ -144,3 +169,10 @@ def stream(
                 yield sse(event)
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+@router.get("/{session_id}/simulation")
+def simulation_state(session_id: str, user: CurrentUser, db: DbSession):
+    session = _owned(db, user.id, session_id)
+    state = session.simulation_state or {}
+    return {"revision": state.get("revision", 0), "pending": state.get("pending")}

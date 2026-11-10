@@ -22,6 +22,8 @@ class ToolContext:
     db: Any
     client: QdrantClient
     embedder: Embedder
+    simulation_selection: dict | None = None
+    simulation_reply: str | None = None
     on_progress: Callable[[str], None] | None = None
     pending_artifacts: list[dict] = field(default_factory=list)
     """Populated by `create_artifact`; drained by the loop for SSE events + message linkage."""

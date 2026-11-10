@@ -118,6 +118,7 @@ class ChatSession(Base):
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
+    simulation_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     title: Mapped[str] = mapped_column(String, default="New Chat")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(

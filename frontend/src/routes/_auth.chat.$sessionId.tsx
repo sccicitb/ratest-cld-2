@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -34,9 +35,17 @@ export default function ChatRoute() {
     streamedContent,
     streamedReasoning,
     currentArtifact,
+    error,
     reset,
     abort,
   } = useStreamChat(sessionId);
+
+  const [focusRequest, setFocusRequest] = useState(0);
+  const { data: simulation } = useQuery({
+    queryKey: ["simulation", sessionId],
+    queryFn: () => api.getSimulationState(sessionId),
+    enabled: !!sessionId,
+  });
 
   // `GET /sessions` (list) is the source of truth for `activeTurn` — the
   // single-session fetch doesn't stamp it (backend §Task2/3).
@@ -186,6 +195,33 @@ export default function ChatRoute() {
             <MessageBubble key={message.id} message={message} />
           ))}
 
+          {simulation?.pending && (
+            <section aria-label="Klarifikasi simulasi" className="rounded-xl border border-border bg-muted/50 p-4 text-sm">
+              <p className="mb-3 font-medium">{simulation.pending.question}</p>
+              <div className="flex flex-col items-start gap-2">
+                {simulation.pending.options.map((option) => (
+                  <Button
+                    key={option.id}
+                    variant="outline"
+                    className="h-auto whitespace-normal text-left"
+                    disabled={isStreaming || activeTurn}
+                    onClick={() => void sendMessage(option.label, undefined, {
+                      questionId: simulation.pending!.id,
+                      optionId: option.id,
+                    })}
+                  >
+                    {option.label}
+                  </Button>
+                ))}
+                <Button variant="ghost" disabled={isStreaming || activeTurn} onClick={() => setFocusRequest((value) => value + 1)}>
+                  Pilihan lain — tulis lewat chat
+                </Button>
+              </div>
+              <p className="mt-3 text-muted-foreground">Boleh juga menjawab lewat chat, misalnya “yang kedua” atau “dari terakhir, tapi tambah tiga”.</p>
+            </section>
+          )}
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+
           {/* Artifact cards live with the chat history — they appear after
               the assistant message that produced them, or at the end of the
               feed for reloaded artifacts. */}
@@ -240,6 +276,7 @@ export default function ChatRoute() {
       <div className="shrink-0">
         <InputBar
           onSend={handleSend}
+          focusRequest={focusRequest}
           isStreaming={isStreaming}
           onAbort={abort}
           locked={activeTurn && !isStreaming}

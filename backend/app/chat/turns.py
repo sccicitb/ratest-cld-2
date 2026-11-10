@@ -15,8 +15,10 @@ from collections.abc import AsyncIterator
 
 from app.chat.loop import run_turn
 from app.mcp.resolve import resolve_caller_mcp_tools
+from app.tools.builtin.clarify_simulation import ClarifySimulation, ResolveSimulationClarification
 from app.tools.builtin.create_artifact import CreateArtifact
 from app.tools.builtin.execute_code import ExecuteCode
+from app.tools.builtin.run_simulation import RunSimulation
 from app.tools.builtin.search_kb import SearchKnowledgeBase
 from app.tools.context import ToolContext
 from app.tools.registry import ToolRegistry
@@ -29,11 +31,14 @@ class TurnInProgress(Exception):
 
 
 def build_turn_registry() -> ToolRegistry:
-    """A ToolRegistry with the three built-in tools (moved from chat/routes)."""
+    """Build the per-turn registry of built-in tools."""
     registry = ToolRegistry()
     registry.register(SearchKnowledgeBase())
     registry.register(ExecuteCode())
     registry.register(CreateArtifact())
+    registry.register(RunSimulation())
+    registry.register(ClarifySimulation())
+    registry.register(ResolveSimulationClarification())
     return registry
 
 
@@ -73,13 +78,13 @@ class ChatTurnRegistry:
 
     def spawn(
         self, session_id: str, *, user_id: str, message: str,
-        model_content: str, attachment_ids: list[str],
+        model_content: str, attachment_ids: list[str], simulation_selection: dict | None = None,
     ) -> ChatTurnJob:
         if session_id in self._jobs:
             raise TurnInProgress(session_id)
         job = ChatTurnJob(session_id)
         job.task = asyncio.create_task(
-            self._run(job, user_id, message, model_content, attachment_ids)
+            self._run(job, user_id, message, model_content, attachment_ids, simulation_selection)
         )
         self._jobs[session_id] = job
         job.task.add_done_callback(
@@ -91,7 +96,7 @@ class ChatTurnRegistry:
 
     async def _run(
         self, job: ChatTurnJob, user_id: str, message: str,
-        model_content: str, attachment_ids: list[str],
+        model_content: str, attachment_ids: list[str], simulation_selection: dict | None = None,
     ) -> None:
         from app.models import ChatSession, User
 
@@ -110,6 +115,7 @@ class ChatTurnRegistry:
                     ctx = ToolContext(
                         user_id=user_id, session_id=job.session_id,
                         db=db, client=self._client, embedder=self._embedder,
+                        simulation_selection=simulation_selection,
                     )
                     async for ev in run_turn(
                         db=db, session=session, message=message,

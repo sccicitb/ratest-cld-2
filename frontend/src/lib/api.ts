@@ -25,6 +25,8 @@ import type {
   Message,
   Session,
   StreamEvent,
+  SimulationSelection,
+  SimulationClarification,
   UploadStreamEvent,
 } from "@/types/chat";
 import type { FileStatus, KBFilters, KnowledgeBaseFile } from "@/types/kb";
@@ -118,6 +120,7 @@ export async function* streamChat(
   msg: string,
   attachments?: Attachment[],
   signal?: AbortSignal,
+  simulationSelection?: SimulationSelection,
 ): AsyncGenerator<StreamEvent> {
   const res = await fetch(PREFIX(`/api/sessions/${sessionId}/chat`), {
     method: "POST",
@@ -127,7 +130,7 @@ export async function* streamChat(
       Accept: "text/event-stream",
       ...authHeaders(),
     },
-    body: JSON.stringify({ message: msg, attachments }),
+    body: JSON.stringify({ message: msg, attachments, simulationSelection }),
     signal,
   });
   if (!res.ok || !res.body) {
@@ -446,3 +449,8 @@ export const updateMe = (payload: { voice: string }): Promise<User> =>
     body: JSON.stringify(payload),
     headers: { ...JSON_H, ...authHeaders() },
   }).then((r) => r.json());
+
+export const getSimulationState = (sessionId: string): Promise<{
+  revision: number;
+  pending: SimulationClarification | null;
+}> => req(`/api/sessions/${sessionId}/simulation`, { headers: authHeaders() }).then(r => r.json());

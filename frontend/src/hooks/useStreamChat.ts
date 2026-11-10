@@ -9,6 +9,7 @@ import type {
   PipelineStep,
   StepStatus,
   StreamEvent,
+  SimulationSelection,
 } from "@/types/chat";
 
 export interface StepState {
@@ -135,7 +136,7 @@ export function useStreamChat(sessionId: string) {
         if (runIdRef.current !== run || aborted) {
           // Superseded (room switch / abort / new turn) — not a failure, and
           // the state belongs to whoever replaced us now.
-        } else if (err instanceof ApiError && err.status === 409) {
+        } else if (err instanceof ApiError && err.status === 409 && err.code === "turn_in_progress") {
           // 409 means a turn is already running for this room (e.g. it was
           // started elsewhere, or resume() and sendMessage() raced). That's
           // not a failure — the `activeTurn` poll + resume-on-entry effect
@@ -153,6 +154,7 @@ export function useStreamChat(sessionId: string) {
         // this run's room (captured at creation), so a superseded run still
         // refreshes the room it actually belonged to.
         qc.invalidateQueries({ queryKey: queryKeys.messages(sessionId) });
+        qc.invalidateQueries({ queryKey: ["simulation", sessionId] });
         qc.invalidateQueries({ queryKey: queryKeys.sessions });
       }
     },
@@ -160,7 +162,7 @@ export function useStreamChat(sessionId: string) {
   );
 
   const sendMessage = useCallback(
-    async (message: string, attachments?: Attachment[]) => {
+    async (message: string, attachments?: Attachment[], selection?: SimulationSelection) => {
       const { run, signal } = startRun();
       reset();
       setIsStreaming(true);
@@ -168,7 +170,7 @@ export function useStreamChat(sessionId: string) {
       // Reflect the new user message immediately.
       qc.invalidateQueries({ queryKey: queryKeys.messages(sessionId) });
 
-      await consumeStream(run, streamChat(sessionId, message, attachments, signal));
+      await consumeStream(run, streamChat(sessionId, message, attachments, signal, selection));
     },
     [sessionId, qc, reset, startRun, consumeStream],
   );

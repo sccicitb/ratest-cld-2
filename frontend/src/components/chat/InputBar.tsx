@@ -32,9 +32,10 @@ interface InputBarProps {
    * swapping to the abort button — there's nothing local to abort yet.
    */
   locked?: boolean;
+  focusRequest?: number;
 }
 
-export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps) {
+export function InputBar({ onSend, isStreaming, onAbort, locked, focusRequest }: InputBarProps) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -59,6 +60,10 @@ export function InputBar({ onSend, isStreaming, onAbort, locked }: InputBarProps
   });
   const { data: voiceCaps } = useVoiceCapabilities();
   const micEnabled = voiceSupported && !!voiceCaps?.stt;
+
+  useEffect(() => {
+    if (focusRequest) textareaRef.current?.focus();
+  }, [focusRequest]);
 
   // Auto-grow the textarea.
   useEffect(() => {
