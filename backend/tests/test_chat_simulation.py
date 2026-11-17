@@ -130,7 +130,9 @@ def test_turn_delivers_simulation_result_to_model_and_persists_answer(simulation
     assert events[-1]["type"] == "done"
     streamed = "".join(event["content"] for event in events if event["type"] == "token")
     if kind == "success":
-        assert streamed == model.answer
+        assert "| Kapasitas total | ton/hari | 50 | 60 | 10 | 20% |" in streamed
+        assert "| Kapasitas total | ton/hari | 50 | 75 | 25 | 50% |" in streamed
+        assert streamed != model.answer
     else:
         assert "Belum ada hasil perhitungan baru" in streamed
         assert streamed != model.answer
@@ -248,7 +250,7 @@ def test_later_successful_retry_releases_normal_answer(simulation_session):
             [ModelChunk(type="text", text="Kapasitas hasil engine: 60 ton/hari.")],
         ],
     )
-    assert saved == "Kapasitas hasil engine: 60 ton/hari."
+    assert "| Kapasitas total | ton/hari | 50 | 60 | 10 | 20% |" in saved
     assert not any("HIDDEN_RETRY_MATH" in e.get("content", "") for e in events)
     assert after["result"]["scenarios"][0]["outputs"]["total"]["scenarioValue"] == 60
 
@@ -407,7 +409,7 @@ def test_success_after_mixed_round_recovers(simulation_session):
             [ModelChunk(type="text", text="Hasil engine setelah koreksi: 70 ton/hari.")],
         ],
     )
-    assert saved == "Hasil engine setelah koreksi: 70 ton/hari."
+    assert "| Kapasitas total | ton/hari | 50 | 70 | 20 | 40% |" in saved
     assert after["result"]["scenarios"][0]["outputs"]["total"]["scenarioValue"] == 70
 
 
@@ -431,3 +433,36 @@ def test_failed_calculation_can_recover_with_server_clarification(simulation_ses
     assert after["pending"]["kind"] == "add"
     assert after["result"] == before["result"]
     assert events[-1]["type"] == "done"
+
+
+def test_successful_engine_result_replaces_false_model_numbers_everywhere(simulation_session):
+    events, saved, _, _ = _guard_turn(
+        simulation_session,
+        [
+            [_call_definition(_single_definition())],
+            [
+                ModelChunk(type="reasoning", text="HIDDEN_SUCCESS_999"),
+                ModelChunk(type="text", text="HIDDEN_SUCCESS_999, 900%, unsupported causality"),
+            ],
+        ],
+    )
+    assert "HIDDEN_SUCCESS_999" not in saved
+    assert not any("HIDDEN_SUCCESS_999" in e.get("content", "") for e in events)
+    assert "| Kapasitas total | ton/hari | 50 | 60 | 10 | 20% |" in saved
+
+
+def test_multiple_successes_in_one_round_show_each_report(simulation_session):
+    second = _single_definition()
+    second["title"] = "Skenario kedua"
+    second["scenarios"][0]["overrides"]["fleet"]["value"] = 14
+    _, saved, _, after = _guard_turn(
+        simulation_session,
+        [
+            [_call_definition(_single_definition(), "a"), _call_definition(second, "b")],
+            [ModelChunk(type="text", text="HIDDEN_EXTRA_COMPARISON")],
+        ],
+    )
+    assert "HIDDEN_EXTRA_COMPARISON" not in saved
+    assert "| 50 | 60 | 10 | 20% |" in saved
+    assert "| 50 | 70 | 20 | 40% |" in saved
+    assert after["result"]["scenarios"][0]["outputs"]["total"]["scenarioValue"] == 70

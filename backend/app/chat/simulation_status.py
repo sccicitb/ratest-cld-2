@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pydantic import ValidationError
 
@@ -42,10 +42,11 @@ class SimulationStatus:
     blocked: bool = False
     calculated: bool = False
     code: str | None = None
+    results: list[SimulationResult] = field(default_factory=list)
 
     def observe(self, calls_and_results: list[tuple[str, str]]) -> None:
         failures = []
-        calculated = False
+        round_results = []
         for name, raw in calls_and_results:
             if name not in SIMULATION_TOOLS:
                 continue
@@ -65,11 +66,11 @@ class SimulationStatus:
                 "resolve_simulation_clarification",
             }:
                 try:
-                    SimulationResult.model_validate(response.get("result"))
+                    result = SimulationResult.model_validate(response.get("result"))
                 except ValidationError:
                     failures.append(None)
                 else:
-                    calculated = True
+                    round_results.append(result)
             elif (
                 name == "clarify_simulation"
                 and status == "needs_clarification"
@@ -80,11 +81,12 @@ class SimulationStatus:
             else:
                 code = response.get("code")
                 failures.append(code if isinstance(code, str) else None)
-        self.calculated = self.calculated or calculated
+        self.calculated = self.calculated or bool(round_results)
         if failures:
             self.blocked = True
             self.code = failures[-1]
-        elif calculated:
+        elif round_results:
+            self.results = round_results
             self.blocked = False
             self.code = None
 

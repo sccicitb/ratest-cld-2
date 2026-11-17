@@ -36,6 +36,7 @@ from app.chat.simulation_status import SIMULATION_TOOLS, SimulationStatus
 from app.config import settings
 from app.models import ArtifactVersion, Attachment, ChatSession, Message
 from app.simulation.conversation import resolve_clarification
+from app.simulation.presentation import render_simulation
 from app.storage import open_blob
 from app.tools.context import ToolContext
 from app.tools.registry import ToolError, ToolRegistry
@@ -286,13 +287,13 @@ async def run_turn(
             async for chunk in model.stream(messages, tools):
                 if chunk.type == "text":
                     text_parts.append(chunk.text or "")
-                    # Stream the answer live (time-to-first-token). Interim text
-                    # on tool-calling turns is cleared client-side on tool-start;
-                    # only the final turn's text is persisted (see below).
-                    if chunk.text and not simulation_status.blocked:
+                    # Ordinary chat streams live. After a simulation attempt,
+                    # the final calculation/failure reply is rendered server-side.
+                    # Earlier interim text is cleared client-side on tool-start.
+                    if chunk.text and not (simulation_status.blocked or simulation_status.calculated):
                         yield token(chunk.text)
                 elif chunk.type == "reasoning":
-                    if not simulation_status.blocked:
+                    if not (simulation_status.blocked or simulation_status.calculated):
                         yield reasoning(chunk.text or "")
                 elif chunk.type == "tool_call":
                     tool_calls.append(chunk)
@@ -305,13 +306,22 @@ async def run_turn(
                 # is ignored here; we already have nothing else to act on).
                 yield step("thinking", "complete")
                 yield step("generating_response", "active")
-                # Text already streamed live above; just record it for persistence.
+                # Only ordinary chat uses model-authored text as the final answer.
                 if simulation_status.blocked:
                     state = session.simulation_state or {}
                     reply = simulation_status.failure_reply(
                         has_previous_result=bool(state.get("result")),
                         has_pending=bool(state.get("pending")),
                     )
+                    final_text_parts.append(reply)
+                    yield token(reply)
+                elif simulation_status.results:
+                    reply = "\n\n---\n\n".join(
+                        render_simulation(result) for result in simulation_status.results
+                    )
+                    pending = (session.simulation_state or {}).get("pending")
+                    if pending:
+                        reply += "\n\n" + pending["question"] + " Klik pilihan atau jawab lewat chat."
                     final_text_parts.append(reply)
                     yield token(reply)
                 else:

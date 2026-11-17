@@ -8,6 +8,7 @@ from copy import deepcopy
 
 from app.models import ChatSession
 from app.simulation.engine import run_simulation
+from app.simulation.presentation import render_reference_change, render_simulation
 from app.simulation.schemas import (
     ParameterOverride,
     SimulationDefinition,
@@ -252,31 +253,16 @@ def resolve_clarification(ctx, question_id, reference=None, amount=None, cancel=
     session.simulation_state = state
     ctx.db.commit()
     parameter = next(p for p in definition.parameters if p.id == pending["parameterId"])
-    lines = [
-        (
-            f"Acuan: {'baseline' if reference == 'baseline' else source['label']}. "
-            f"{parameter.label}: {source['parameters'][pending['parameterId']]['value']:g} + {increment:g} = **{target:g} {parameter.unit}**."
-        ),
-        "\n| Hasil | Baseline | Skenario | Selisih | Perubahan terhadap baseline |",
-        "|---|---:|---:|---:|---:|",
-    ]
-    for output in definition.outputs:
-        value = result.scenarios[0].outputs[output.id]
-        percent = (
-            "Tidak terdefinisi"
-            if value.percentage_change is None
-            else f"{value.percentage_change:g}%"
+    ctx.simulation_reply = (
+        render_reference_change(
+            reference="baseline" if reference == "baseline" else source["label"],
+            parameter=parameter.label,
+            unit=parameter.unit,
+            before=source["parameters"][pending["parameterId"]]["value"],
+            amount=increment,
+            after=target,
         )
-        lines.append(
-            f"| {output.label} ({output.unit}) | {value.baseline_value:g} | {value.scenario_value:g} | {value.delta:g} | {percent} |"
-        )
-    lines.append("\nAsumsi: " + "; ".join(definition.assumptions or ["Tidak dicantumkan."]))
-    lines.append(
-        "\nKeterbatasan: "
-        + "; ".join(
-            definition.limitations
-            or ["Mengikuti rumus yang diberikan; bukan validasi dampak kausal."]
-        )
+        + "\n\n"
+        + render_simulation(result)
     )
-    ctx.simulation_reply = "\n".join(lines)
     return {"status": "success", "result": state["result"]}

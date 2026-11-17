@@ -60,7 +60,8 @@ tidak memanggil tool, periksa konfigurasi endpoint, dukungan tool calling, dan
 instruksi prompt; angka dalam teks saja tidak membuktikan engine dijalankan.
 
 Alur: user → model menyusun definisi → `RunSimulation` memvalidasi → engine
-menghitung → hasil JSON kembali ke model → jawaban dan event melalui SSE. Tool
+menghitung → hasil JSON kembali ke loop/model → jawaban perhitungan disusun backend
+dan dikirim melalui SSE. Tool
 memerlukan konteks sesi server, tidak menerima user/session ID dari model.
 Maksimum input 32 KiB UTF-8, 32 parameter, 8 output, 8 skenario, dan hasil 128 KiB.
 Kegagalan mengembalikan `status: error` beserta kode dan detail yang relevan;
@@ -141,9 +142,9 @@ Uji manual regresi identitas:
 mengirim `simulationSelection: {questionId, optionId}` pada endpoint chat yang
 sama. Pilihan yang sudah dijawab/kedaluwarsa ditolak. `run_simulation` tidak boleh
 menimpa snapshot saat pending; tool code execution juga diblokir dalam turn selama
-pending. Pertanyaan dan tabel hasil penyelesaian dibuat server agar model tidak
-mengubah angka atau menambahkan perbandingan lain. Narasi pada simulasi awal masih
-berasal dari model.
+pending. Pertanyaan klarifikasi serta tabel hasil simulasi awal dan
+penyelesaian dibuat server agar model tidak mengubah angka atau menambahkan
+perbandingan lain.
 
 Batas tahap ini: penambahan satu parameter dengan acuan baseline/alternatif
 aktif. Penyelesaian klarifikasi penambahan ini belum mendukung operasi set-total, persen, atau beberapa parameter dalam
@@ -179,7 +180,7 @@ Model tetap menerima error untuk memperbaiki input dan mencoba ulang.
   sudah ada. Menyelesaikan klarifikasi tidak selalu berarti menghitung hasil baru.
 
 Batasnya: ini memverifikasi status tool dan kontrak hasil, bukan pemahaman maksud
-pengguna atau kebenaran seluruh narasi setelah tool sukses. Chat yang tidak
+pengguna atau validitas data/rumus yang diberikan. Chat yang tidak
 memanggil tool simulasi belum tercakup pengaman ini. Streaming awal sebelum error
 diketahui mengikuti perilaku chat sebelumnya; teks interim dibersihkan UI saat
 pemanggilan tool dimulai. Tidak ada pemeriksaan semantik terhadap artifact HTML.
@@ -200,6 +201,43 @@ Pengujian otomatis di `test_chat_simulation.py` sengaja memakai model berskrip
 untuk memaksa klaim sukses setelah kegagalan, retry, hasil campuran, respons rusak,
 exception dan batas iterasi; tidak bergantung pada kemauan LLM memanggil rumus
 yang tidak valid. Suite juga memeriksa token/reasoning SSE dan pesan tersimpan.
+
+## Penyajian hasil perhitungan
+
+`simulation/presentation.py::render_simulation` adalah satu penyaji Markdown untuk
+simulasi awal dan hasil setelah klarifikasi. Ia menerima `SimulationResult` yang
+sudah dihitung; tidak menghitung ulang delta, persentase, atau perbandingan lain.
+Jawaban memuat judul/tujuan, rumus dan satuan, parameter baseline serta asal nilai,
+parameter efektif setiap alternatif, seluruh output, asumsi dan keterbatasan.
+Persentase `null` ditulis tidak terdefinisi karena baseline nol. Angka float
+mengikuti representasi Python tanpa pembulatan tersembunyi ke enam digit; nol
+bertanda ditampilkan sebagai 0. Ini bukan perubahan presisi engine.
+
+Status per-turn menyimpan hasil tervalidasi dari putaran perhitungan sukses terbaru,
+bukan mengambil snapshot lama sebagai hasil baru. Beberapa panggilan sukses dalam
+putaran yang sama ditampilkan sebagai laporan terpisah; jika putaran berikutnya
+menghitung revisi, laporan memakai hasil revisi terbaru. Ketika status masih gagal,
+pesan kegagalan tetap diutamakan. Balasan server untuk pemilihan/pembatalan dan
+pertanyaan klarifikasi tetap digunakan seperti sebelumnya.
+
+Setelah ada perhitungan berhasil, teks dan reasoning model ditahan. Model masih
+bisa memanggil tool untuk koreksi atau melanjutkan pekerjaan, tetapi jawaban
+perhitungan akhirnya berasal dari penyaji server. Narasi tambahan dan hitungan
+manual dari model tidak disertakan. Metadata dari definisi tetap merupakan
+input/deklarasi model atau pengguna, bukan fakta domain yang otomatis tervalidasi;
+teksnya di-escape agar tidak membentuk HTML atau baris tabel tambahan.
+
+Uji manual:
+1. Jalankan contoh armada 10 × 5 dengan alternatif 12 dan 15 armada. Pastikan kedua
+   tabel menampilkan 50 → 60 (+10; 20%) dan 50 → 75 (+25; 50%). Rumus, satuan,
+   parameter serta asumsi harus muncul tanpa perbandingan tambahan buatan model.
+2. Pilih acuan, lanjutkan penambahan, lalu reload. Tabel hasil lanjutan memakai
+   format yang sama dan tetap tersedia pada riwayat pesan.
+3. Uji baseline 0 dengan rumus valid dan skenario nonnol. Persentase ditampilkan
+   sebagai tidak terdefinisi, bukan 0%.
+
+Chat konseptual yang tidak memanggil tool perhitungan tetap memakai jawaban model.
+Jawaban historis tidak ditulis ulang; tidak ada perubahan schema DB atau frontend.
 
 ## Mencoba manual
 
