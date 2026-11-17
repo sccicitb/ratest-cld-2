@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from app.chat.client import ModelChunk, ModelClient
 from app.chat.events import artifact, done, error, reasoning, step, token
 from app.chat.prompt import system_message
+from app.chat.simulation_status import SIMULATION_TOOLS, SimulationStatus
 from app.config import settings
 from app.models import ArtifactVersion, Attachment, ChatSession, Message
 from app.simulation.conversation import resolve_clarification
@@ -271,6 +272,7 @@ async def run_turn(
         iteration = 0
         force_final = False
         current_turn_artifact_versions: list[str] = []
+        simulation_status = SimulationStatus()
 
         while True:
             iteration += 1
@@ -287,10 +289,11 @@ async def run_turn(
                     # Stream the answer live (time-to-first-token). Interim text
                     # on tool-calling turns is cleared client-side on tool-start;
                     # only the final turn's text is persisted (see below).
-                    if chunk.text:
+                    if chunk.text and not simulation_status.blocked:
                         yield token(chunk.text)
                 elif chunk.type == "reasoning":
-                    yield reasoning(chunk.text or "")
+                    if not simulation_status.blocked:
+                        yield reasoning(chunk.text or "")
                 elif chunk.type == "tool_call":
                     tool_calls.append(chunk)
 
@@ -303,7 +306,16 @@ async def run_turn(
                 yield step("thinking", "complete")
                 yield step("generating_response", "active")
                 # Text already streamed live above; just record it for persistence.
-                final_text_parts.append("".join(text_parts))
+                if simulation_status.blocked:
+                    state = session.simulation_state or {}
+                    reply = simulation_status.failure_reply(
+                        has_previous_result=bool(state.get("result")),
+                        has_pending=bool(state.get("pending")),
+                    )
+                    final_text_parts.append(reply)
+                    yield token(reply)
+                else:
+                    final_text_parts.append("".join(text_parts))
                 yield step("generating_response", "complete")
                 break
 
@@ -347,13 +359,12 @@ async def run_turn(
                     return await _run_tool_call(tc.name, tc.arguments or {}, registry, ctx)
 
             # SQLAlchemy session and conversation state must not be mutated concurrently.
-            simulation_tools = {
-                "run_simulation", "clarify_simulation", "resolve_simulation_clarification"
-            }
-            if any(tc.name in simulation_tools for tc in tool_calls):
+            if any(tc.name in SIMULATION_TOOLS for tc in tool_calls):
                 results = [await _bounded(tc) for tc in tool_calls]
             else:
                 results = await asyncio.gather(*(_bounded(tc) for tc in tool_calls))
+
+            simulation_status.observe([(tc.name, result) for tc, result in zip(tool_calls, results)])
 
             for call_id in call_ids:
                 yield step("calling_tool", "complete", id=call_id)

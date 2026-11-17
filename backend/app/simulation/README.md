@@ -154,6 +154,53 @@ mengikuti batas konkurensi registry turn aplikasi saat ini (satu proses); belum
 menggunakan penguncian lintas worker. Belum ada panel parameter/grafik khusus
 atau verifikasi otomatis data OPD dan asumsi kausal.
 
+## Status perhitungan dan kegagalan tool
+
+`chat/simulation_status.py` mencatat hasil tool simulasi selama satu turn, tanpa
+mengubah snapshot atau menghitung ulang angka. `loop.py` memakai status ini untuk
+menahan teks dan reasoning model pada putaran setelah tool simulasi gagal.
+Model tetap menerima error untuk memperbaiki input dan mencoba ulang.
+
+- Jika model berhenti atau mencapai batas iterasi sementara kegagalan belum
+  teratasi, jawaban akhir dibuat server: alasan umum yang aman, status hasil baru,
+  dan permintaan memperbaiki input atau menjawab klarifikasi. Teks/angka manual
+  dari model pada putaran yang diblokir tidak dikirim sebagai jawaban atau disimpan.
+- Hasil tool berformat rusak, status tidak dikenal, exception tool, atau klaim
+  sukses tanpa `SimulationResult` yang valid diperlakukan sebagai kegagalan.
+  Validator kontrak yang sudah ada digunakan kembali; tidak ada engine kedua.
+- Putaran berikutnya yang seluruh pemanggilan simulasinya berhasil menghitung
+  dapat memulihkan status. Hasil campuran sukses/gagal dalam satu putaran tetap
+  diblokir; keberhasilan tool lain tidak menghapus kegagalan simulasi.
+- Jika ada perhitungan yang sudah berhasil pada turn tersebut, hasilnya tetap
+  tersimpan dan jawaban menjelaskan bahwa seluruh permintaan belum selesai.
+  Jika belum ada perhitungan baru yang berhasil, jawaban membedakan snapshot lama
+  dari hasil permintaan sekarang. Tidak ada rollback atas perhitungan yang sah.
+- Klarifikasi, pemilihan acuan, dan pembatalan tetap memakai balasan server yang
+  sudah ada. Menyelesaikan klarifikasi tidak selalu berarti menghitung hasil baru.
+
+Batasnya: ini memverifikasi status tool dan kontrak hasil, bukan pemahaman maksud
+pengguna atau kebenaran seluruh narasi setelah tool sukses. Chat yang tidak
+memanggil tool simulasi belum tercakup pengaman ini. Streaming awal sebelum error
+diketahui mengikuti perilaku chat sebelumnya; teks interim dibersihkan UI saat
+pemanggilan tool dimulai. Tidak ada pemeriksaan semantik terhadap artifact HTML.
+
+Uji manual melalui Citya setelah restart backend:
+
+1. Jalankan simulasi sintetis armada dengan rumus valid untuk memastikan jalur
+   sukses dan pilihan acuan tetap bekerja.
+2. Pada chat baru, minta simulasi sintetis dengan rumus `fleet / 0` dan parameter
+   `fleet = 10`; minta sistem memakai engine tanpa mengganti rumus. Jika model
+   memanggil tool dan perhitungan ditolak, jawaban akhir harus menjelaskan masalah
+   pembagian nol, bukan mengklaim hasil numerik berhasil. Model boleh meminta
+   klarifikasi lebih dahulu; itu bukan reproduksi error tool.
+3. Kirim rumus valid `fleet * capacity`, `capacity = 5`, dan skenario `fleet = 12`.
+   Jika input lengkap dan berhasil, hasil baseline 50 dan skenario 60 boleh tampil.
+
+Pengujian otomatis di `test_chat_simulation.py` sengaja memakai model berskrip
+untuk memaksa klaim sukses setelah kegagalan, retry, hasil campuran, respons rusak,
+exception dan batas iterasi; tidak bergantung pada kemauan LLM memanggil rumus
+yang tidak valid. Suite juga memeriksa token/reasoning SSE dan pesan tersimpan.
+
 ## Mencoba manual
 
 Jalankan dari folder `backend` dengan Python yang memiliki Pydantic v2:
