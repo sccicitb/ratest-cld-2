@@ -102,7 +102,40 @@ satu pertanyaan aktif dengan opsi yang mengacu pada revisi tersebut. Hasil baru
 mengganti snapshot terakhir; riwayat hasil tetap berupa pesan, belum arsip versi
 terstruktur lengkap. Baseline asli dipertahankan pada penambahan lanjutan. Semua
 parameter lain mengikuti acuan yang dipilih. Jika ada beberapa alternatif dalam
-snapshot, “skenario terakhir” berarti alternatif terakhir dalam daftar hasil tool.
+snapshot, acuan lanjutan memakai `activeScenarioId`, bukan posisi daftar.
+Hasil tunggal otomatis aktif; hasil dengan beberapa alternatif membuat pending
+`select_scenario` dan tombol pilihan. Memilihnya hanya menyimpan ID; baseline,
+rumus dan hasil tidak dihitung ulang. Pemilihan dapat dijawab lewat chat dengan
+`resolve_simulation_clarification` menggunakan ID opsi yang sedang ditampilkan.
+Ordinal seperti “yang kedua” harus mengikuti urutan opsi pending, bukan alias tetap.
+Sebelum user menjawab pada turn berikutnya, model tidak boleh menyelesaikan
+klarifikasi yang baru dibuat sendiri.
+
+Untuk state lama tanpa ID aktif: satu skenario tetap dapat dipakai karena tidak
+ambigu; beberapa skenario meminta pilihan. Pending penambahan lama yang tidak
+menyimpan ID skenario dikonfirmasi ulang bila snapshot berisi beberapa alternatif.
+Klik lama tersebut membuat pertanyaan baru tanpa menghitung; ID pertanyaan lama
+kemudian kedaluwarsa. Opsi baru menyimpan `scenarioId`, sehingga mengubah urutan
+hasil tidak mengubah acuan. Alias wire `last_scenario` dipertahankan untuk opsi
+acuan aktif, tetapi tidak lagi berarti elemen terakhir.
+
+`clarify_simulation` tanpa argumen dapat dipakai untuk meminta pilihan acuan dari
+snapshot yang sudah ada (misalnya state lama atau mengganti acuan). Pemanggilan
+dengan `parameterId` dan `amount` tetap meminta klarifikasi penambahan. Jika
+belum ada ID aktif, pilihan penambahan menyertakan baseline dan semua alternatif;
+sistem tidak memilih salah satunya secara otomatis. Tidak ada tool/engine baru.
+
+Uji manual regresi identitas:
+1. Minta dua alternatif sintetis: target 4 armada berkapasitas 6 ton/hari/armada,
+   dan pembanding 17 armada berkapasitas 5. Baseline tetap 10 × 5 = 50.
+2. Setelah hasil muncul, pilih **Target 4 armada** pada tombol acuan (atau sebutkan
+   nama/nomor opsi lewat chat). UI menampilkan label acuan aktif.
+3. Reload, lalu kirim “sekarang coba tambah lima”. Pilihan acuan target harus
+   menampilkan 4 + 5 → 9; pembanding 17 bukan default tersembunyi.
+4. Pilih acuan target tersebut: hasil 9 × 6 = **54 ton/hari**, baseline **50**,
+   selisih **4**, perubahan **8%**. Parameter kapasitas tetap mengikuti target.
+5. Klik ulang pilihan yang sudah dipakai ditolak. Memilih opsi pada chat berbeda
+   juga harus ditolak oleh pemeriksaan sesi/kepemilikan.
 
 `GET /api/sessions/{id}/simulation` menyediakan pending untuk UI/reload. Klik
 mengirim `simulationSelection: {questionId, optionId}` pada endpoint chat yang
@@ -113,7 +146,7 @@ mengubah angka atau menambahkan perbandingan lain. Narasi pada simulasi awal mas
 berasal dari model.
 
 Batas tahap ini: penambahan satu parameter dengan acuan baseline/alternatif
-terakhir. Belum mendukung operasi set-total, persen, atau beberapa parameter dalam
+aktif. Penyelesaian klarifikasi penambahan ini belum mendukung operasi set-total, persen, atau beberapa parameter dalam
 satu penyelesaian. Untuk permintaan di luar scope, model diarahkan mengklarifikasi
 atau menawarkan pembatalan. Pengenalan ambiguitas dan interpretasi jawaban natural
 masih bergantung pada LLM; validasi bukan jaminan semua kalimat dipahami. State

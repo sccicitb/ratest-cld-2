@@ -453,4 +453,6 @@ export const updateMe = (payload: { voice: string }): Promise<User> =>
 export const getSimulationState = (sessionId: string): Promise<{
   revision: number;
   pending: SimulationClarification | null;
+  activeScenarioId: string | null;
+  activeScenarioLabel: string | null;
 }> => req(`/api/sessions/${sessionId}/simulation`, { headers: authHeaders() }).then(r => r.json());

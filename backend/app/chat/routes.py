@@ -18,7 +18,7 @@ and prepending it to the message sent to the model.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -33,6 +33,7 @@ from app.kb.routes import get_embedder_dep, get_qdrant
 from app.models import Attachment, ChatSession
 from app.rag.embedder import Embedder
 from app.rag.extract import extract_text
+from app.simulation.conversation import active_scenario
 from app.simulation.schemas import SimulationModel
 from app.sse import sse
 
@@ -52,7 +53,7 @@ ChatTurnsDep = Annotated[ChatTurnRegistry, Depends(get_chat_turns)]
 
 class SimulationSelection(SimulationModel):
     question_id: str = Field(min_length=1, max_length=64)
-    option_id: Literal["baseline", "last_scenario"]
+    option_id: str = Field(min_length=1, max_length=80)
 
 
 class ChatRequest(BaseModel):
@@ -175,4 +176,10 @@ def stream(
 def simulation_state(session_id: str, user: CurrentUser, db: DbSession):
     session = _owned(db, user.id, session_id)
     state = session.simulation_state or {}
-    return {"revision": state.get("revision", 0), "pending": state.get("pending")}
+    active = active_scenario(state)
+    return {
+        "revision": state.get("revision", 0),
+        "pending": state.get("pending"),
+        "activeScenarioId": active["id"] if active else None,
+        "activeScenarioLabel": active["label"] if active else None,
+    }

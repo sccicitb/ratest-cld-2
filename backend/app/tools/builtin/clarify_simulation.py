@@ -1,7 +1,6 @@
 """Model adapters: interpretation belongs to the model; arithmetic to the server."""
 
 import json
-from typing import Literal
 
 from pydantic import Field, StrictFloat, ValidationError
 
@@ -13,13 +12,13 @@ from app.simulation.schemas import Identifier, SimulationModel
 
 
 class RequestClarification(SimulationModel):
-    parameter_id: Identifier
-    amount: StrictFloat
+    parameter_id: Identifier | None = None
+    amount: StrictFloat | None = None
 
 
 class ResolveClarification(SimulationModel):
     question_id: str = Field(min_length=1, max_length=64)
-    reference: Literal["baseline", "last_scenario"] | None = None
+    reference: str | None = Field(default=None, min_length=1, max_length=80)
     amount: StrictFloat | None = None
     cancel: bool = False
 
@@ -32,7 +31,7 @@ class ClarifySimulation:
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "Ask clickable clarification when an additive follow-up (e.g. tambah lima) has ambiguous baseline vs last-scenario reference. Requires a previously saved simulation. Supply the parameter ID and additive amount ONLY; the server builds and anchors options. Do not choose a reference yourself. One active question per session.",
+                "description": "Ask clickable clarification when an additive follow-up (e.g. tambah lima) has ambiguous baseline vs last-scenario reference. Requires a previously saved simulation. To ask which existing scenario should become active without calculating, omit parameterId and amount. Supply the parameter ID and additive amount ONLY; the server builds and anchors options. Do not choose a reference yourself. One active question per session.",
                 "parameters": RequestClarification.model_json_schema(by_alias=True),
             },
         }
@@ -63,7 +62,7 @@ class ResolveSimulationClarification:
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "Resolve the ACTIVE stored clarification from the user's natural answer. 'yang kedua' means last_scenario; 'dari baseline' means baseline. If the user changes the increment, supply amount (e.g. dari terakhir tapi tambah tiga => last_scenario, amount=3). Never infer a reference when still ambiguous: ask again instead. For cancellation set cancel=true. questionId MUST match active context. Backend computes results; do not run_simulation to bypass this.",
+                "description": "Resolve the ACTIVE stored clarification from the user's natural answer. Map ordinal answers to the EXACT option id in the ACTIVE pending options, never hardcode an ordinal as last_scenario. reference is baseline, last_scenario (only when offered for an explicitly identified active scenario), or scenario:<id>. A pending select_scenario only selects an identity; it does not calculate. If the user changes the increment, supply amount (e.g. dari terakhir tapi tambah tiga => last_scenario, amount=3). Never infer a reference when still ambiguous: ask again instead. For cancellation set cancel=true. questionId MUST match active context. Backend computes results; do not run_simulation to bypass this.",
                 "parameters": ResolveClarification.model_json_schema(by_alias=True),
             },
         }

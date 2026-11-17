@@ -195,6 +195,9 @@ export default function ChatRoute() {
             <MessageBubble key={message.id} message={message} />
           ))}
 
+          {simulation?.activeScenarioLabel && (
+            <p className="text-sm text-muted-foreground">Acuan aktif: {simulation.activeScenarioLabel}</p>
+          )}
           {simulation?.pending && (
             <section aria-label="Klarifikasi simulasi" className="rounded-xl border border-border bg-muted/50 p-4 text-sm">
               <p className="mb-3 font-medium">{simulation.pending.question}</p>
@@ -217,7 +220,9 @@ export default function ChatRoute() {
                   Pilihan lain — tulis lewat chat
                 </Button>
               </div>
-              <p className="mt-3 text-muted-foreground">Boleh juga menjawab lewat chat, misalnya “yang kedua” atau “dari terakhir, tapi tambah tiga”.</p>
+              <p className="mt-3 text-muted-foreground">{simulation.pending.kind === "select_scenario"
+                ? "Pilih skenario lewat tombol atau chat, misalnya nama skenario atau nomor pilihannya. Memilih acuan tidak mengubah hasil."
+                : "Boleh juga menjawab lewat chat. Pilih acuan yang tercantum; kamu juga bisa mengubah jumlah penambahannya."}</p>
             </section>
           )}
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

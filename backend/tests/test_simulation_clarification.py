@@ -41,7 +41,8 @@ def context():
         db.commit()
         ctx = ToolContext(user_id="owner", session_id="session", db=db, client=None, embedder=None)
         definition = json.loads(EXAMPLE.read_text())
-        # Last alternative is 15 fleet, not 12: test actual persisted ordering.
+        # Existing tests exercise an unambiguous single scenario (15 fleet).
+        definition["scenarios"] = [definition["scenarios"][-1]]
         result = json.loads(asyncio.run(RunSimulation().execute(definition, ctx)))
         assert result["status"] == "success"
         yield ctx, factory
@@ -79,6 +80,7 @@ def test_reference_preserves_other_parameters(context):
         "value": 8,
         "origin": {"kind": "user_input", "description": "capacity change"},
     }
+    definition["scenarios"] = [definition["scenarios"][-1]]
     # Determine actual capacity parameter identifier from example.
     capacity = definition["parameters"][1]["id"]
     definition["scenarios"][-1]["overrides"][capacity] = definition["scenarios"][-1][
@@ -206,11 +208,10 @@ def test_route_options_reload_click_and_stale_choice(
         ctx = ToolContext(
             user_id=demo_user["id"], session_id=session_id, db=db, client=None, embedder=None
         )
+        definition = json.loads(EXAMPLE.read_text())
+        definition["scenarios"] = [definition["scenarios"][-1]]
         assert (
-            json.loads(asyncio.run(RunSimulation().execute(json.loads(EXAMPLE.read_text()), ctx)))[
-                "status"
-            ]
-            == "success"
+            json.loads(asyncio.run(RunSimulation().execute(definition, ctx)))["status"] == "success"
         )
         pending = request_clarification(ctx, "fleet", 5)
     url = f"/api/sessions/{session_id}"
@@ -274,3 +275,314 @@ def test_invalid_clarification_fields_are_not_echoed(context, tool_name):
     )
     assert json.loads(response)["status"] == "error"
     assert "do-not-echo-this" not in response
+
+
+def save_multiple(ctx):
+    definition = json.loads(EXAMPLE.read_text())
+    definition["scenarios"] = [
+        {
+            "id": "target",
+            "label": "Target 4 armada",
+            "overrides": {
+                "fleet": {
+                    "value": 4,
+                    "origin": {"kind": "user_input", "description": "Requested target"},
+                },
+                "capacity": {
+                    "value": 6,
+                    "origin": {"kind": "user_input", "description": "Chosen capacity"},
+                },
+            },
+        },
+        {
+            "id": "comparison",
+            "label": "Pembanding 17 armada",
+            "overrides": {
+                "fleet": {
+                    "value": 17,
+                    "origin": {"kind": "synthetic", "description": "Comparison only"},
+                },
+            },
+        },
+    ]
+    result = json.loads(asyncio.run(RunSimulation().execute(definition, ctx)))
+    assert result["status"] == "success"
+    pending = ctx.db.get(ChatSession, ctx.session_id).simulation_state["pending"]
+    assert pending["kind"] == "select_scenario"
+    resolve_clarification(ctx, pending["id"], cancel=True)
+    ctx.simulation_reply = None
+    return definition
+
+
+def test_multiple_alternatives_have_no_implicit_active_identity(context):
+    from app.simulation.conversation import active_scenario
+
+    ctx, _ = context
+    save_multiple(ctx)
+    state = ctx.db.get(ChatSession, ctx.session_id).simulation_state
+    assert active_scenario(state) is None
+    assert state["activeScenarioId"] is None
+    question = request_clarification(ctx, "fleet", 5)
+    assert [o["id"] for o in question["options"]] == [
+        "baseline",
+        "scenario:target",
+        "scenario:comparison",
+    ]
+    assert [o["targetValue"] for o in question["options"]] == [15, 9, 22]
+    # There is no last_scenario alias until an identity is selected.
+    with pytest.raises(ConversationError):
+        resolve_clarification(ctx, question["id"], "last_scenario")
+
+
+def test_selected_identity_survives_reordering_reload_and_addition(context):
+    ctx, factory = context
+    save_multiple(ctx)
+    pending = request_clarification(ctx)
+    result = resolve_clarification(ctx, pending["id"], "scenario:target")
+    assert result == {"status": "selected", "activeScenarioId": "target"}
+    room = ctx.db.get(ChatSession, ctx.session_id)
+    state = deepcopy(room.simulation_state)
+    original_result = deepcopy(state["result"])
+    # Selecting an identity leaves the baseline and all results unchanged.
+    assert state["result"]["baseline"]["outputs"]["total"] == 50
+    state["result"]["scenarios"].reverse()
+    room.simulation_state = state
+    ctx.db.commit()
+    with factory() as reopened:
+        reloaded_ctx = ToolContext(
+            user_id=ctx.user_id, session_id=ctx.session_id, db=reopened, client=None, embedder=None
+        )
+        pending = request_clarification(reloaded_ctx, "fleet", 5)
+        assert pending["options"][1]["scenarioId"] == "target"
+        assert pending["options"][1]["baseValue"] == 4
+        assert pending["options"][1]["targetValue"] == 9
+        # Change order while pending: the anchored ID still resolves to target.
+        current = reopened.get(ChatSession, ctx.session_id)
+        current.simulation_state = {**current.simulation_state, "result": original_result}
+        reopened.commit()
+        result = resolve_clarification(reloaded_ctx, pending["id"], "last_scenario")["result"]
+        assert result["scenarios"][0]["parameters"]["fleet"]["value"] == 9
+        assert result["scenarios"][0]["parameters"]["capacity"]["value"] == 6
+        assert result["scenarios"][0]["outputs"]["total"]["scenarioValue"] == 54
+        assert result["baseline"]["outputs"]["total"] == 50
+        assert current.simulation_state["activeScenarioId"] == "clarified_scenario"
+
+
+def test_legacy_multiple_snapshot_does_not_infer_last(context):
+    from app.simulation.conversation import active_scenario
+
+    ctx, _ = context
+    save_multiple(ctx)
+    room = ctx.db.get(ChatSession, ctx.session_id)
+    state = deepcopy(room.simulation_state)
+    state.pop("activeScenarioId")
+    room.simulation_state = state
+    ctx.db.commit()
+    assert active_scenario(state) is None
+    question = request_clarification(ctx)
+    assert len(question["options"]) == 2
+    before = deepcopy(room.simulation_state["result"])
+    with pytest.raises(ConversationError):
+        resolve_clarification(ctx, question["id"], "scenario:target", amount=3)
+    with pytest.raises(ConversationError):
+        resolve_clarification(ctx, question["id"], "scenario:foreign")
+    resolve_clarification(ctx, question["id"], "scenario:target")
+    assert room.simulation_state["result"] == before
+
+
+def test_legacy_pending_requests_reconfirmation_without_calculation(context):
+    ctx, _ = context
+    save_multiple(ctx)
+    room = ctx.db.get(ChatSession, ctx.session_id)
+    before = deepcopy(room.simulation_state["result"])
+    legacy = {
+        "id": "old-question",
+        "revision": room.simulation_state["revision"],
+        "parameterId": "fleet",
+        "amount": 5,
+        "question": "Old question",
+        "options": [
+            {"id": "last_scenario", "baseValue": 17, "targetValue": 22, "label": "Old last"}
+        ],
+    }
+    room.simulation_state = {**room.simulation_state, "pending": legacy}
+    ctx.db.commit()
+    result = resolve_clarification(ctx, "old-question", "last_scenario")
+    assert result["status"] == "needs_clarification"
+    assert result["pending"]["id"] != "old-question"
+    assert len(result["pending"]["options"]) == 3
+    assert room.simulation_state["result"] == before
+    with pytest.raises(ConversationError):
+        resolve_clarification(ctx, "old-question", "last_scenario")
+
+
+def test_sole_legacy_scenario_is_unambiguous(context):
+    from app.simulation.conversation import active_scenario
+
+    ctx, _ = context
+    room = ctx.db.get(ChatSession, ctx.session_id)
+    state = deepcopy(room.simulation_state)
+    state.pop("activeScenarioId")
+    room.simulation_state = state
+    ctx.db.commit()
+    assert active_scenario(state)["id"] == "add_five"
+    question = request_clarification(ctx, "fleet", 5)
+    assert question["options"][1]["scenarioId"] == "add_five"
+
+
+def test_natural_ordinal_uses_actual_option_id(context):
+    ctx, _ = context
+    save_multiple(ctx)
+    pending = request_clarification(ctx)
+    ctx.simulation_reply = None
+
+    class ChoosingModel:
+        async def stream(self, messages, tools):
+            yield ModelChunk(
+                type="tool_call",
+                id="choose",
+                name="resolve_simulation_clarification",
+                arguments={"questionId": pending["id"], "reference": "scenario:target"},
+            )
+
+    async def consume():
+        return [
+            e
+            async for e in run_turn(
+                db=ctx.db,
+                session=ctx.db.get(ChatSession, ctx.session_id),
+                message="Pilih yang pertama",
+                registry=build_turn_registry(),
+                model=ChoosingModel(),
+                ctx=ctx,
+            )
+        ]
+
+    events = asyncio.run(consume())
+    assert events[-1]["type"] == "done"
+    assert ctx.db.get(ChatSession, ctx.session_id).simulation_state["activeScenarioId"] == "target"
+
+
+def test_multi_result_creates_clickable_selection_and_endpoint_persists_choice(
+    client, auth_headers, session_factory, demo_user
+):
+    session_id = client.post("/api/sessions", headers=auth_headers).json()["id"]
+    definition = json.loads(EXAMPLE.read_text())
+    with session_factory() as db:
+        ctx = ToolContext(
+            user_id=demo_user["id"], session_id=session_id, db=db, client=None, embedder=None
+        )
+        response = json.loads(asyncio.run(RunSimulation().execute(definition, ctx)))
+        assert response["requiresScenarioSelection"] is True
+    url = f"/api/sessions/{session_id}"
+    state = client.get(url + "/simulation", headers=auth_headers).json()
+    assert state["activeScenarioId"] is None
+    assert state["pending"]["kind"] == "select_scenario"
+    assert [o["id"] for o in state["pending"]["options"]] == [
+        "scenario:add_two",
+        "scenario:add_five",
+    ]
+    body = {
+        "message": "ignored label",
+        "simulationSelection": {
+            "questionId": state["pending"]["id"],
+            "optionId": "scenario:add_two",
+        },
+    }
+    assert client.post(url + "/chat", headers=auth_headers, json=body).status_code == 200
+    state = client.get(url + "/simulation", headers=auth_headers).json()
+    assert state["activeScenarioId"] == "add_two"
+    assert state["activeScenarioLabel"] == "Tambah dua armada"
+    assert state["pending"] is None
+    assert client.post(url + "/chat", headers=auth_headers, json=body).status_code == 409
+    with session_factory() as db:
+        ctx = ToolContext(
+            user_id=demo_user["id"], session_id=session_id, db=db, client=None, embedder=None
+        )
+        pending = request_clarification(ctx, "fleet", 5)
+        assert pending["options"][1]["baseValue"] == 12
+        result = resolve_clarification(ctx, pending["id"], "last_scenario")["result"]
+        assert result["scenarios"][0]["outputs"]["total"]["scenarioValue"] == 85
+        assert result["baseline"]["outputs"]["total"] == 50
+
+
+def test_model_cannot_select_new_question_in_same_turn(context):
+    ctx, _ = context
+    definition = json.loads(EXAMPLE.read_text())
+
+    class SelfSelectingModel:
+        calls = 0
+
+        async def stream(self, messages, tools):
+            self.calls += 1
+            if self.calls == 1:
+                yield ModelChunk(
+                    type="tool_call", id="run", name="run_simulation", arguments=definition
+                )
+            elif self.calls == 2:
+                state = ctx.db.get(ChatSession, ctx.session_id).simulation_state
+                yield ModelChunk(
+                    type="tool_call",
+                    id="choose",
+                    name="resolve_simulation_clarification",
+                    arguments={
+                        "questionId": state["pending"]["id"],
+                        "reference": "scenario:add_five",
+                    },
+                )
+            else:
+                assert "Wait for the user" in messages[-1]["content"]
+                yield ModelChunk(type="text", text="Silakan pilih acuan melalui tombol.")
+
+    async def consume():
+        return [
+            e
+            async for e in run_turn(
+                db=ctx.db,
+                session=ctx.db.get(ChatSession, ctx.session_id),
+                message="Bandingkan dua alternatif",
+                registry=build_turn_registry(),
+                model=SelfSelectingModel(),
+                ctx=ctx,
+            )
+        ]
+
+    events = asyncio.run(consume())
+    assert events[-1]["type"] == "done"
+    state = ctx.db.get(ChatSession, ctx.session_id).simulation_state
+    assert state["activeScenarioId"] is None
+    assert state["pending"]["kind"] == "select_scenario"
+
+
+def test_legacy_single_pending_keeps_working(context):
+    ctx, _ = context
+    room = ctx.db.get(ChatSession, ctx.session_id)
+    pending = request_clarification(ctx, "fleet", 5)
+    state = deepcopy(room.simulation_state)
+    state.pop("activeScenarioId")
+    for option in state["pending"]["options"]:
+        option.pop("scenarioId")
+    room.simulation_state = state
+    ctx.db.commit()
+    result = resolve_clarification(ctx, pending["id"], "last_scenario")["result"]
+    assert result["scenarios"][0]["parameters"]["fleet"]["value"] == 20
+
+
+def test_failed_legacy_reconfirmation_keeps_original_pending(context):
+    ctx, _ = context
+    save_multiple(ctx)
+    room = ctx.db.get(ChatSession, ctx.session_id)
+    legacy = {
+        "id": "old",
+        "revision": room.simulation_state["revision"],
+        "parameterId": "fleet",
+        "amount": 1000,
+        "options": [{"id": "last_scenario", "baseValue": 17, "label": "Old"}],
+    }
+    room.simulation_state = {**room.simulation_state, "pending": legacy}
+    ctx.db.commit()
+    before = deepcopy(room.simulation_state)
+    with pytest.raises(ValueError):
+        resolve_clarification(ctx, "old", "last_scenario")
+    ctx.db.commit()
+    assert room.simulation_state == before

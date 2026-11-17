@@ -32,67 +32,140 @@ def save_result(ctx, result):
     old = session.simulation_state or {}
     if old.get("pending"):
         raise ConversationError("Jawab atau batalkan klarifikasi aktif sebelum simulasi baru.")
-    session.simulation_state = {
+    state = {
         "revision": old.get("revision", 0) + 1,
         "result": result.model_dump(mode="json", by_alias=True),
         "pending": None,
+        "activeScenarioId": result.scenarios[0].id if len(result.scenarios) == 1 else None,
     }
+    if len(result.scenarios) > 1:
+        state["pending"] = _new_pending(
+            state,
+            "Skenario mana yang ingin dijadikan acuan aktif?",
+            _scenario_options(state),
+            kind="select_scenario",
+        )
+    session.simulation_state = state
     ctx.db.commit()
 
 
-def request_clarification(ctx, parameter_id: str, amount: float):
+def active_scenario(state):
+    """Resolve identity, never list order; only a sole legacy scenario is unambiguous."""
+    scenarios = state.get("result", {}).get("scenarios", [])
+    scenario_id = state.get("activeScenarioId")
+    if scenario_id:
+        return next((item for item in scenarios if item["id"] == scenario_id), None)
+    return scenarios[0] if len(scenarios) == 1 else None
+
+
+def _new_pending(state, question, options, **details):
+    return {
+        "id": str(uuid.uuid4()),
+        "revision": state["revision"],
+        "question": question,
+        "options": options,
+        **details,
+    }
+
+
+def _publish_pending(ctx, session, state, question, options, **details):
+    pending = _new_pending(state, question, options, **details)
+    state["pending"] = pending
+    session.simulation_state = state
+    ctx.db.commit()
+    ctx.simulation_reply = (
+        question
+        + "\n\n"
+        + "\n".join(f"{i}. {option['label']}" for i, option in enumerate(options, 1))
+        + "\n\nKlik pilihan atau jawab lewat chat. Kamu juga bisa membatalkan klarifikasi."
+    )
+    return pending
+
+
+def _scenario_options(state):
+    parameters = {p["id"]: p for p in state["result"]["definition"]["parameters"]}
+    return [
+        {
+            "id": f"scenario:{item['id']}",
+            "scenarioId": item["id"],
+            "label": f"{item['label']} ("
+            + ", ".join(
+                f"{parameters[key]['label']} = {value['value']:g} {parameters[key]['unit']}"
+                for key, value in item["parameters"].items()
+            )
+            + ")",
+        }
+        for item in state["result"]["scenarios"]
+    ]
+
+
+def request_clarification(ctx, parameter_id: str | None = None, amount: float | None = None):
     session = owned_session(ctx)
-    state = deepcopy(session.simulation_state or {})
+    return _request_clarification(
+        ctx, session, deepcopy(session.simulation_state or {}), parameter_id, amount
+    )
+
+
+def _request_clarification(ctx, session, state, parameter_id, amount):
     if state.get("pending"):
         raise ConversationError("Masih ada klarifikasi aktif; jawab atau batalkan terlebih dahulu.")
-    result = state.get("result")
-    if not result:
+    if not state.get("result"):
         raise ConversationError(
             "Belum ada simulasi tersimpan. Tanyakan baseline dan rumus terlebih dahulu."
         )
-    definition = SimulationDefinition.model_validate(result["definition"])
+    if parameter_id is None and amount is None:
+        return _publish_pending(
+            ctx,
+            session,
+            state,
+            "Skenario mana yang ingin dijadikan acuan aktif?",
+            _scenario_options(state),
+            kind="select_scenario",
+        )
+    if parameter_id is None or amount is None or not math.isfinite(amount):
+        raise ConversationError("Parameter dan jumlah penambahan harus lengkap dan finite.")
+    definition = SimulationDefinition.model_validate(state["result"]["definition"])
     parameter = next((p for p in definition.parameters if p.id == parameter_id), None)
     if parameter is None:
         raise ConversationError("Parameter tidak dikenal; tanyakan parameter yang dimaksud.")
-    last = result["scenarios"][-1]
-    baseline = parameter.baseline_value
-    previous = last["parameters"][parameter_id]["value"]
+    active = active_scenario(state)
+    # Without a selected identity, offer every alternative; none is the default.
+    scenarios = [active] if active else state["result"]["scenarios"]
+    sources = [("baseline", None, parameter.baseline_value, "baseline")]
+    sources.extend(
+        (
+            "last_scenario" if active else f"scenario:{item['id']}",
+            item["id"],
+            item["parameters"][parameter_id]["value"],
+            f"skenario {item['label']}",
+        )
+        for item in scenarios
+    )
     options = []
-    for reference, value, label in (
-        ("baseline", baseline, "baseline"),
-        ("last_scenario", previous, f"skenario terakhir ({last['label']})"),
-    ):
+    for option_id, scenario_id, value, label in sources:
         target = value + amount
         parameter.check_value(target)
         if not math.isfinite(target):
             raise ConversationError("Hasil penambahan tidak finite.")
         options.append(
             {
-                "id": reference,
+                "id": option_id,
+                "scenarioId": scenario_id,
                 "label": f"Dari {label}: {value:g} + {amount:g} → {target:g} {parameter.unit}",
-                "reference": reference,
                 "baseValue": value,
                 "targetValue": target,
             }
         )
-    pending = {
-        "id": str(uuid.uuid4()),
-        "revision": state["revision"],
-        "parameterId": parameter_id,
-        "amount": amount,
-        "question": f"Penambahan {amount:g} {parameter.unit} untuk {parameter.label} dihitung dari mana?",
-        "options": options,
-    }
-    state["pending"] = pending
-    session.simulation_state = state
-    ctx.db.commit()
-    ctx.simulation_reply = (
-        pending["question"]
-        + "\n\n"
-        + "\n".join(f"{i}. {option['label']}" for i, option in enumerate(options, 1))
-        + "\n\nKlik pilihan atau jawab lewat chat. Kamu juga bisa mengubah jumlahnya, atau membatalkan klarifikasi."
+    return _publish_pending(
+        ctx,
+        session,
+        state,
+        f"Penambahan {amount:g} {parameter.unit} untuk {parameter.label} dihitung dari mana?",
+        options,
+        kind="add",
+        parameterId=parameter_id,
+        amount=amount,
     )
-    return pending
 
 
 def resolve_clarification(ctx, question_id, reference=None, amount=None, cancel=False):
@@ -112,23 +185,54 @@ def resolve_clarification(ctx, question_id, reference=None, amount=None, cancel=
     option = next((o for o in pending["options"] if o["id"] == reference), None)
     if option is None:
         raise ConversationError(
-            "Pilih baseline atau last_scenario; jika belum jelas, tanyakan kembali."
+            "Pilih ID opsi yang tersedia pada klarifikasi aktif; jika belum jelas, tanyakan kembali."
         )
-    increment = pending["amount"] if amount is None else amount
-    target = option["baseValue"] + increment
-    definition = SimulationDefinition.model_validate(state["result"]["definition"])
-    # A follow-up creates a new alternative, preserving the original baseline.
-    # Carry all other inputs from the chosen reference, not just the edited parameter.
+    scenario_id = option.get("scenarioId")
+    if reference != "baseline" and "scenarioId" not in option:
+        # Old pending options were anchored only by list position. Reconfirm all
+        # alternatives instead of silently trusting that historic interpretation.
+        legacy_scenarios = state["result"]["scenarios"]
+        legacy_active = legacy_scenarios[0] if len(legacy_scenarios) == 1 else None
+        if legacy_active is None:
+            state["pending"] = None
+            replacement = _request_clarification(
+                ctx, session, state, pending["parameterId"], pending["amount"]
+            )
+            return {"status": "needs_clarification", "pending": replacement}
+        scenario_id = legacy_active["id"]
     source = (
-        state["result"]["baseline"] if reference == "baseline" else state["result"]["scenarios"][-1]
+        state["result"]["baseline"]
+        if reference == "baseline"
+        else next(
+            (item for item in state["result"]["scenarios"] if item["id"] == scenario_id), None
+        )
     )
+    if source is None:
+        raise ConversationError("Skenario acuan tidak ditemukan. Batalkan dan pilih ulang.")
+    if pending.get("kind") == "select_scenario":
+        if amount is not None:
+            raise ConversationError(
+                "Pemilihan acuan tidak menghitung penambahan. Kirim perubahan setelah memilih."
+            )
+        state.update(activeScenarioId=scenario_id, pending=None)
+        session.simulation_state = state
+        ctx.db.commit()
+        ctx.simulation_reply = (
+            f"Acuan aktif dipilih: **{source['label']}**. Hasil dan baseline tidak berubah."
+        )
+        return {"status": "selected", "activeScenarioId": scenario_id}
+    increment = pending["amount"] if amount is None else amount
+    target = source["parameters"][pending["parameterId"]]["value"] + increment
+    definition = SimulationDefinition.model_validate(state["result"]["definition"])
+    # Carry every input from the identified reference; the baseline stays intact.
     overrides = {
         key: ParameterOverride.model_validate(value) for key, value in source["parameters"].items()
     }
     overrides[pending["parameterId"]] = ParameterOverride(
         value=target,
         origin=ValueOrigin(
-            kind="user_input", description=f"Klarifikasi: {option['baseValue']:g} + {increment:g}"
+            kind="user_input",
+            description=f"Klarifikasi: {source['parameters'][pending['parameterId']]['value']:g} + {increment:g}",
         ),
     )
     definition.scenarios = [
@@ -142,6 +246,7 @@ def resolve_clarification(ctx, question_id, reference=None, amount=None, cancel=
     state.update(
         revision=state["revision"] + 1,
         pending=None,
+        activeScenarioId=result.scenarios[0].id,
         result=result.model_dump(mode="json", by_alias=True),
     )
     session.simulation_state = state
@@ -149,8 +254,8 @@ def resolve_clarification(ctx, question_id, reference=None, amount=None, cancel=
     parameter = next(p for p in definition.parameters if p.id == pending["parameterId"])
     lines = [
         (
-            f"Acuan: {'baseline' if reference == 'baseline' else 'skenario terakhir'}. "
-            f"{parameter.label}: {option['baseValue']:g} + {increment:g} = **{target:g} {parameter.unit}**."
+            f"Acuan: {'baseline' if reference == 'baseline' else source['label']}. "
+            f"{parameter.label}: {source['parameters'][pending['parameterId']]['value']:g} + {increment:g} = **{target:g} {parameter.unit}**."
         ),
         "\n| Hasil | Baseline | Skenario | Selisih | Perubahan terhadap baseline |",
         "|---|---:|---:|---:|---:|",

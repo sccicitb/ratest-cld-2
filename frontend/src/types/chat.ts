@@ -131,13 +131,14 @@ export type UploadStreamEvent =
   | { type: "done" }
   | { type: "error"; message: string };
 
-/** Server-anchored options for one pending additive simulation question. */
+/** Server-anchored options for one pending simulation reference question. */
 export interface SimulationSelection {
   questionId: string;
-  optionId: "baseline" | "last_scenario";
+  optionId: string;
 }
 
 export interface SimulationClarification {
+  kind?: "add" | "select_scenario";
   id: string;
   revision: number;
   question: string;

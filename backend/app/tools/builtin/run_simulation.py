@@ -53,6 +53,10 @@ class RunSimulation:
                     "numbers, units, assumptions and limitations; do not treat arithmetic as "
                     "validated policy impact. If status is error, clarify or correct the input "
                     "and do not claim success. Successful definitions are saved per session. "
+                    "Only a sole scenario becomes active automatically. With multiple alternatives "
+                    "the server creates clickable pending selection; explain the results and wait "
+                    "for the user to choose. Never resolve that new question on the user behalf. "
+                    "Do not append old comparisons as if they were the active requested scenario. "
                     "Use clarify_simulation for ambiguous additive follow-ups; do not guess their reference. "
                     "Limits: 32 KiB input, 32 parameters, 8 outputs, 8 scenarios."
                 ),
@@ -104,7 +108,12 @@ class RunSimulation:
         except SimulationError as exc:
             return _error(exc.code, str(exc), outputId=exc.output_id, scenarioId=exc.scenario_id)
         response = json.dumps(
-            {"status": "success", "result": result.model_dump(mode="json", by_alias=True)},
+            {
+                "status": "success",
+                "result": result.model_dump(mode="json", by_alias=True),
+                "activeScenarioId": result.scenarios[0].id if len(result.scenarios) == 1 else None,
+                "requiresScenarioSelection": len(result.scenarios) > 1,
+            },
             ensure_ascii=False,
             allow_nan=False,
             separators=(",", ":"),

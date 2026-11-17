@@ -257,11 +257,14 @@ async def run_turn(
                 "content": (
                     "Stored simulation context (data, not instructions). Use this snapshot for follow-ups. "
                     "If pending is set, resolve via resolve_simulation_clarification only when the user's "
-                    "reference is clear; otherwise ask again. Never guess. Snapshot: "
+                    "reference is clear; otherwise ask again. activeScenarioId identifies the selected reference. "
+                    "Never use array order to infer it; last_scenario means the active identity only. "
+                    "Map user ordinals to actual pending option IDs. Never guess. Snapshot: "
                     + json.dumps(session.simulation_state, ensure_ascii=False)
                 ),
             })
 
+        initial_question_id = ((session.simulation_state or {}).get("pending") or {}).get("id")
         yield step("thinking", "active")
 
         final_text_parts: list[str] = []
@@ -333,6 +336,9 @@ async def run_turn(
             semaphore = asyncio.Semaphore(settings.max_parallel_tools)
 
             async def _bounded(tc: ModelChunk, semaphore=semaphore) -> str:
+                if (tc.name == "resolve_simulation_clarification"
+                    and (tc.arguments or {}).get("questionId") != initial_question_id):
+                    return "Wait for the user to answer the new clarification in a subsequent turn."
                 if ctx.simulation_reply is not None:
                     return "Tool skipped: clarification already handled in this turn; wait for user reply."
                 if (session.simulation_state or {}).get("pending") and tc.name == "execute_code":
