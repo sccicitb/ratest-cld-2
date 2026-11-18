@@ -1,0 +1,748 @@
+{
+  "startedAtUtc": "2026-11-18T04:58:29.875437+00:00",
+  "model": "qwen3.8-flash-next-iq3_s",
+  "commit": "5943a6071e99be4ae42217c0df925cdfe0e069e3",
+  "workingTree": " M app/chat/prompt.py\n M app/chat/simulation_status.py\n M app/simulation/README.md\n M app/simulation/conversation.py\n M app/simulation/presentation.py\n M app/tools/builtin/clarify_simulation.py\n M app/tools/builtin/run_simulation.py\n M tests/test_chat_simulation.py\n M tests/test_simulation_clarification.py\n M tests/test_simulation_presentation.py\n M tests/test_simulation_tool.py\n M ../frontend/src/app.css\n M ../frontend/src/components/chat/MessageBubble.tsx\n M ../frontend/src/routes/_auth.chat.$sessionId.tsx\n?? ../.vscode/\n?? examples/simulation/policy_pilot_cases.json\n?? scripts/evaluate_policy_pilot.py\n?? tests/test_policy_pilot_evaluation.py\n?? ../docs/pilots/\n?? ../frontend/src/components/chat/ChatMarkdown.tsx\n",
+  "limitations": [
+    "Synthetic only",
+    "No real KB/MCP/sandbox/artifact services",
+    "DB session reopen is not browser reload",
+    "Manual/domain review still required"
+  ],
+  "cases": [
+    {
+      "id": "P01",
+      "name": "Baseline dan dua alternatif",
+      "review": "Label sintetis, rumus, satuan ton/hari, asumsi dan batas interpretasi harus jelas.",
+      "manualReview": "pending",
+      "steps": [
+        {
+          "message": "Gunakan data sintetis: baseline 10 armada, kapasitas efektif tiap armada 5 ton per hari. Kapasitas seragam dan tenaga kerja mencukupi. Dengan rumus jumlah armada dikali kapasitas efektif per armada per hari, bandingkan penambahan 2 dan 5 armada terhadap baseline. Tampilkan hanya kapasitas total harian sebagai output.",
+          "expect": {
+            "baseline": 50,
+            "scenarioValues": [
+              60,
+              75
+            ],
+            "pending": null
+          },
+          "seconds": 16.25,
+          "tools": [
+            {
+              "tool": "run_simulation",
+              "argumentKeys": [
+                "title",
+                "objective",
+                "parameters",
+                "outputs",
+                "scenarios",
+                "assumptions",
+                "limitations"
+              ],
+              "status": "success",
+              "code": null,
+              "issues": []
+            }
+          ],
+          "answer": "### Simulasi Kapasitas Harian Armada (Data Sintetis)\n\nMembandingkan kapasitas total harian armada pada baseline 10 armada dengan skenario penambahan 2 armada dan penambahan 5 armada.\n\nAsal input: Data sintetis.\n\nPerbandingan terhadap **kondisi awal (baseline)**. Hasil dihitung oleh engine simulasi.\n\n**Kondisi awal:** Jumlah armada: 10 armada; Kapasitas efektif per armada per hari: 5 ton/armada/hari.\n\n#### Kapasitas total harian (ton/hari)\n\n| Skenario | Hasil | Selisih | Perubahan |\n|---|---:|---:|---:|\n| Kondisi awal | **50** | — | — |\n| Penambahan 2 armada (12 armada) | **60** | +10 | +20% |\n| Penambahan 5 armada (15 armada) | **75** | +25 | +50% |\n\n**Asumsi**\n\n- Semua nilai adalah data sintetis yang diizinkan pengguna, bukan data operasional riil.\n- Kapasitas efektif tiap armada seragam, yaitu 5 ton/armada/hari, pada semua skenario.\n- Tenaga kerja mencukupi sehingga penambahan armada langsung menambah kapasitas.\n- Tidak ada batasan rute, jam operasi, atau biaya yang dimodelkan.\n\n**Keterbatasan**\n\n- Rumus bersifat linear (jumlah armada x kapasitas per armada), sehingga hasil tidak menangkap efek jenuh, bottleneck, atau biaya tambahan.\n- Angka hasil hitungan skenario bukan bukti dampak kausal kebijakan.\n- Kapasitas riil di lapangan dapat berbeda karena variasi utilisasi, pemeliharaan, dan kondisi lalu lintas.\n- Hasil mengikuti data dan rumus yang diberikan; bukan bukti dampak kausal kebijakan.\n\n#### Detail perhitungan dan asal nilai\n\n| Hasil | Satuan | Rumus |\n|---|---|---|\n| Kapasitas total harian | ton/hari | jumlah\\_armada \\* kapasitas\\_efektif\\_per\\_armada |\n\n**Parameter baseline**\n\n| Parameter | Nilai | Satuan | Asal nilai |\n|---|---:|---|---|\n| Jumlah armada | 10 | armada | Data sintetis: Nilai baseline 10 armada yang diberikan pengguna sebagai data sintetis |\n| Kapasitas efektif per armada per hari | 5 | ton/armada/hari | Data sintetis: Nilai 5 ton/armada/hari yang diberikan pengguna sebagai data sintetis, diasumsikan seragam untuk semua armada |\n\n**Perubahan input: Penambahan 2 armada (12 armada)**\n\n| Parameter | Nilai | Satuan | Asal nilai |\n|---|---:|---|---|\n| Jumlah armada | 12 | armada | Data sintetis: Baseline 10 \\+ 2 armada sesuai permintaan pengguna |\n\n**Perubahan input: Penambahan 5 armada (15 armada)**\n\n| Parameter | Nilai | Satuan | Asal nilai |\n|---|---:|---|---|\n| Jumlah armada | 15 | armada | Data sintetis: Baseline 10 \\+ 5 armada sesuai permintaan pengguna |\n\nParameter yang tidak ditimpa mengikuti kondisi awal. Asal nilai merupakan deklarasi input, bukan verifikasi sumber otomatis.",
+          "state": {
+            "revision": 1,
+            "result": {
+              "definition": {
+                "schemaVersion": "1",
+                "title": "Simulasi Kapasitas Harian Armada (Data Sintetis)",
+                "objective": "Membandingkan kapasitas total harian armada pada baseline 10 armada dengan skenario penambahan 2 armada dan penambahan 5 armada.",
+                "parameters": [
+                  {
+                    "id": "jumlah_armada",
+                    "label": "Jumlah armada",
+                    "unit": "armada",
+                    "baselineValue": 10.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Nilai baseline 10 armada yang diberikan pengguna sebagai data sintetis",
+                      "reference": null
+                    },
+                    "minimum": 0.0,
+                    "maximum": null
+                  },
+                  {
+                    "id": "kapasitas_efektif_per_armada",
+                    "label": "Kapasitas efektif per armada per hari",
+                    "unit": "ton/armada/hari",
+                    "baselineValue": 5.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Nilai 5 ton/armada/hari yang diberikan pengguna sebagai data sintetis, diasumsikan seragam untuk semua armada",
+                      "reference": null
+                    },
+                    "minimum": 0.0,
+                    "maximum": null
+                  }
+                ],
+                "outputs": [
+                  {
+                    "id": "kapasitas_total_harian",
+                    "label": "Kapasitas total harian",
+                    "unit": "ton/hari",
+                    "expression": "jumlah_armada * kapasitas_efektif_per_armada"
+                  }
+                ],
+                "scenarios": [
+                  {
+                    "id": "tambah_2_armada",
+                    "label": "Penambahan 2 armada (12 armada)",
+                    "overrides": {
+                      "jumlah_armada": {
+                        "value": 12.0,
+                        "origin": {
+                          "kind": "synthetic",
+                          "description": "Baseline 10 + 2 armada sesuai permintaan pengguna",
+                          "reference": null
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "id": "tambah_5_armada",
+                    "label": "Penambahan 5 armada (15 armada)",
+                    "overrides": {
+                      "jumlah_armada": {
+                        "value": 15.0,
+                        "origin": {
+                          "kind": "synthetic",
+                          "description": "Baseline 10 + 5 armada sesuai permintaan pengguna",
+                          "reference": null
+                        }
+                      }
+                    }
+                  }
+                ],
+                "assumptions": [
+                  "Semua nilai adalah data sintetis yang diizinkan pengguna, bukan data operasional riil.",
+                  "Kapasitas efektif tiap armada seragam, yaitu 5 ton/armada/hari, pada semua skenario.",
+                  "Tenaga kerja mencukupi sehingga penambahan armada langsung menambah kapasitas.",
+                  "Tidak ada batasan rute, jam operasi, atau biaya yang dimodelkan."
+                ],
+                "limitations": [
+                  "Rumus bersifat linear (jumlah armada x kapasitas per armada), sehingga hasil tidak menangkap efek jenuh, bottleneck, atau biaya tambahan.",
+                  "Angka hasil hitungan skenario bukan bukti dampak kausal kebijakan.",
+                  "Kapasitas riil di lapangan dapat berbeda karena variasi utilisasi, pemeliharaan, dan kondisi lalu lintas."
+                ]
+              },
+              "baseline": {
+                "parameters": {
+                  "jumlah_armada": {
+                    "value": 10.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Nilai baseline 10 armada yang diberikan pengguna sebagai data sintetis",
+                      "reference": null
+                    }
+                  },
+                  "kapasitas_efektif_per_armada": {
+                    "value": 5.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Nilai 5 ton/armada/hari yang diberikan pengguna sebagai data sintetis, diasumsikan seragam untuk semua armada",
+                      "reference": null
+                    }
+                  }
+                },
+                "outputs": {
+                  "kapasitas_total_harian": 50.0
+                }
+              },
+              "scenarios": [
+                {
+                  "id": "tambah_2_armada",
+                  "label": "Penambahan 2 armada (12 armada)",
+                  "parameters": {
+                    "jumlah_armada": {
+                      "value": 12.0,
+                      "origin": {
+                        "kind": "synthetic",
+                        "description": "Baseline 10 + 2 armada sesuai permintaan pengguna",
+                        "reference": null
+                      }
+                    },
+                    "kapasitas_efektif_per_armada": {
+                      "value": 5.0,
+                      "origin": {
+                        "kind": "synthetic",
+                        "description": "Nilai 5 ton/armada/hari yang diberikan pengguna sebagai data sintetis, diasumsikan seragam untuk semua armada",
+                        "reference": null
+                      }
+                    }
+                  },
+                  "outputs": {
+                    "kapasitas_total_harian": {
+                      "baselineValue": 50.0,
+                      "scenarioValue": 60.0,
+                      "delta": 10.0,
+                      "percentageChange": 20.0
+                    }
+                  }
+                },
+                {
+                  "id": "tambah_5_armada",
+                  "label": "Penambahan 5 armada (15 armada)",
+                  "parameters": {
+                    "jumlah_armada": {
+                      "value": 15.0,
+                      "origin": {
+                        "kind": "synthetic",
+                        "description": "Baseline 10 + 5 armada sesuai permintaan pengguna",
+                        "reference": null
+                      }
+                    },
+                    "kapasitas_efektif_per_armada": {
+                      "value": 5.0,
+                      "origin": {
+                        "kind": "synthetic",
+                        "description": "Nilai 5 ton/armada/hari yang diberikan pengguna sebagai data sintetis, diasumsikan seragam untuk semua armada",
+                        "reference": null
+                      }
+                    }
+                  },
+                  "outputs": {
+                    "kapasitas_total_harian": {
+                      "baselineValue": 50.0,
+                      "scenarioValue": 75.0,
+                      "delta": 25.0,
+                      "percentageChange": 50.0
+                    }
+                  }
+                }
+              ]
+            },
+            "pending": null,
+            "activeScenarioId": null
+          },
+          "failures": []
+        }
+      ],
+      "automaticChecks": "pass"
+    },
+    {
+      "id": "P02",
+      "name": "Acuan ambigu, jawaban natural dan buka ulang sesi DB",
+      "review": "User memilih acuan 12 armada; hasil harus 17, bukan 15. Pembukaan ulang sesi DB bukan uji reload browser.",
+      "manualReview": "pending",
+      "steps": [
+        {
+          "message": "sekarang coba tambah lima",
+          "expect": {
+            "unchangedResult": true,
+            "pending": "add",
+            "optionTargets": [
+              15,
+              17
+            ]
+          },
+          "seconds": 4.23,
+          "tools": [
+            {
+              "tool": "clarify_simulation",
+              "argumentKeys": [
+                "parameterId",
+                "amount"
+              ],
+              "status": "needs_clarification",
+              "code": null,
+              "issues": []
+            }
+          ],
+          "answer": "Penambahan 5 armada untuk Jumlah armada dihitung dari mana?\n\n1. Dari baseline: 10 + 5 → 15 armada\n2. Dari skenario Tambah dua armada: 12 + 5 → 17 armada\n\nKlik pilihan atau jawab lewat chat. Kamu juga bisa membatalkan klarifikasi.",
+          "state": {
+            "revision": 1,
+            "result": {
+              "definition": {
+                "schemaVersion": "1",
+                "title": "Simulasi kapasitas armada — data sintetis",
+                "objective": "Membandingkan kapasitas harian setelah penambahan armada",
+                "parameters": [
+                  {
+                    "id": "fleet",
+                    "label": "Jumlah armada",
+                    "unit": "armada",
+                    "baselineValue": 10.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Angka contoh, bukan data OPD",
+                      "reference": null
+                    },
+                    "minimum": 0.0,
+                    "maximum": 100.0
+                  },
+                  {
+                    "id": "capacity",
+                    "label": "Kapasitas per armada",
+                    "unit": "ton/hari/armada",
+                    "baselineValue": 5.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Angka contoh, bukan data OPD",
+                      "reference": null
+                    },
+                    "minimum": 0.0,
+                    "maximum": null
+                  }
+                ],
+                "outputs": [
+                  {
+                    "id": "total",
+                    "label": "Kapasitas total",
+                    "unit": "ton/hari",
+                    "expression": "fleet * capacity"
+                  }
+                ],
+                "scenarios": [
+                  {
+                    "id": "add_two",
+                    "label": "Tambah dua armada",
+                    "overrides": {
+                      "fleet": {
+                        "value": 12.0,
+                        "origin": {
+                          "kind": "user_input",
+                          "description": "Target skenario contoh",
+                          "reference": null
+                        }
+                      }
+                    }
+                  }
+                ],
+                "assumptions": [
+                  "Kapasitas setiap armada sama dan tenaga kerja mencukupi"
+                ],
+                "limitations": [
+                  "Belum memperhitungkan rute, downtime, dan kapasitas fasilitas"
+                ]
+              },
+              "baseline": {
+                "parameters": {
+                  "fleet": {
+                    "value": 10.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Angka contoh, bukan data OPD",
+                      "reference": null
+                    }
+                  },
+                  "capacity": {
+                    "value": 5.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Angka contoh, bukan data OPD",
+                      "reference": null
+                    }
+                  }
+                },
+                "outputs": {
+                  "total": 50.0
+                }
+              },
+              "scenarios": [
+                {
+                  "id": "add_two",
+                  "label": "Tambah dua armada",
+                  "parameters": {
+                    "fleet": {
+                      "value": 12.0,
+                      "origin": {
+                        "kind": "user_input",
+                        "description": "Target skenario contoh",
+                        "reference": null
+                      }
+                    },
+                    "capacity": {
+                      "value": 5.0,
+                      "origin": {
+                        "kind": "synthetic",
+                        "description": "Angka contoh, bukan data OPD",
+                        "reference": null
+                      }
+                    }
+                  },
+                  "outputs": {
+                    "total": {
+                      "baselineValue": 50.0,
+                      "scenarioValue": 60.0,
+                      "delta": 10.0,
+                      "percentageChange": 20.0
+                    }
+                  }
+                }
+              ]
+            },
+            "pending": {
+              "id": "cbbee5db-0a99-4e7a-bd09-11f9e2528adb",
+              "revision": 1,
+              "question": "Penambahan 5 armada untuk Jumlah armada dihitung dari mana?",
+              "options": [
+                {
+                  "id": "baseline",
+                  "scenarioId": null,
+                  "label": "Dari baseline: 10 + 5 → 15 armada",
+                  "baseValue": 10.0,
+                  "targetValue": 15.0
+                },
+                {
+                  "id": "last_scenario",
+                  "scenarioId": "add_two",
+                  "label": "Dari skenario Tambah dua armada: 12 + 5 → 17 armada",
+                  "baseValue": 12.0,
+                  "targetValue": 17.0
+                }
+              ],
+              "kind": "add",
+              "parameterId": "fleet",
+              "amount": 5.0
+            },
+            "activeScenarioId": "add_two"
+          },
+          "failures": []
+        },
+        {
+          "message": "yang kedua",
+          "expect": {
+            "baseline": 50,
+            "scenarioValues": [
+              85
+            ],
+            "pending": null
+          },
+          "seconds": 2.24,
+          "tools": [
+            {
+              "tool": "resolve_simulation_clarification",
+              "argumentKeys": [
+                "questionId",
+                "reference"
+              ],
+              "status": "success",
+              "code": null,
+              "issues": []
+            }
+          ],
+          "answer": "Acuan: Tambah dua armada. Jumlah armada: 12 + 5 = **17 armada**.\n\n### Simulasi kapasitas armada — data sintetis\n\nMembandingkan kapasitas harian setelah penambahan armada\n\nAsal input: Input pengguna · Data sintetis.\n\nPerbandingan terhadap **kondisi awal (baseline)**. Hasil dihitung oleh engine simulasi.\n\n**Kondisi awal:** Jumlah armada: 10 armada; Kapasitas per armada: 5 ton/hari/armada.\n\n#### Kapasitas total (ton/hari)\n\n| Skenario | Hasil | Selisih | Perubahan |\n|---|---:|---:|---:|\n| Kondisi awal | **50** | — | — |\n| Skenario lanjutan (revisi 2) | **85** | +35 | +70% |\n\n**Asumsi**\n\n- Kapasitas setiap armada sama dan tenaga kerja mencukupi\n\n**Keterbatasan**\n\n- Belum memperhitungkan rute, downtime, dan kapasitas fasilitas\n- Hasil mengikuti data dan rumus yang diberikan; bukan bukti dampak kausal kebijakan.\n\n#### Detail perhitungan dan asal nilai\n\n| Hasil | Satuan | Rumus |\n|---|---|---|\n| Kapasitas total | ton/hari | fleet \\* capacity |\n\n**Parameter baseline**\n\n| Parameter | Nilai | Satuan | Asal nilai |\n|---|---:|---|---|\n| Jumlah armada | 10 | armada | Data sintetis: Angka contoh, bukan data OPD |\n| Kapasitas per armada | 5 | ton/hari/armada | Data sintetis: Angka contoh, bukan data OPD |\n\n**Perubahan input: Skenario lanjutan (revisi 2)**\n\n| Parameter | Nilai | Satuan | Asal nilai |\n|---|---:|---|---|\n| Jumlah armada | 17 | armada | Input pengguna: Perubahan lanjutan: 12 \\+ 5 |\n| Kapasitas per armada | 5 | ton/hari/armada | Data sintetis: Angka contoh, bukan data OPD |\n\nParameter yang tidak ditimpa mengikuti kondisi awal. Asal nilai merupakan deklarasi input, bukan verifikasi sumber otomatis.",
+          "state": {
+            "revision": 2,
+            "result": {
+              "definition": {
+                "schemaVersion": "1",
+                "title": "Simulasi kapasitas armada — data sintetis",
+                "objective": "Membandingkan kapasitas harian setelah penambahan armada",
+                "parameters": [
+                  {
+                    "id": "fleet",
+                    "label": "Jumlah armada",
+                    "unit": "armada",
+                    "baselineValue": 10.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Angka contoh, bukan data OPD",
+                      "reference": null
+                    },
+                    "minimum": 0.0,
+                    "maximum": 100.0
+                  },
+                  {
+                    "id": "capacity",
+                    "label": "Kapasitas per armada",
+                    "unit": "ton/hari/armada",
+                    "baselineValue": 5.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Angka contoh, bukan data OPD",
+                      "reference": null
+                    },
+                    "minimum": 0.0,
+                    "maximum": null
+                  }
+                ],
+                "outputs": [
+                  {
+                    "id": "total",
+                    "label": "Kapasitas total",
+                    "unit": "ton/hari",
+                    "expression": "fleet * capacity"
+                  }
+                ],
+                "scenarios": [
+                  {
+                    "id": "clarified_scenario",
+                    "label": "Skenario lanjutan (revisi 2)",
+                    "overrides": {
+                      "fleet": {
+                        "value": 17.0,
+                        "origin": {
+                          "kind": "user_input",
+                          "description": "Perubahan lanjutan: 12 + 5",
+                          "reference": null
+                        }
+                      },
+                      "capacity": {
+                        "value": 5.0,
+                        "origin": {
+                          "kind": "synthetic",
+                          "description": "Angka contoh, bukan data OPD",
+                          "reference": null
+                        }
+                      }
+                    }
+                  }
+                ],
+                "assumptions": [
+                  "Kapasitas setiap armada sama dan tenaga kerja mencukupi"
+                ],
+                "limitations": [
+                  "Belum memperhitungkan rute, downtime, dan kapasitas fasilitas"
+                ]
+              },
+              "baseline": {
+                "parameters": {
+                  "fleet": {
+                    "value": 10.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Angka contoh, bukan data OPD",
+                      "reference": null
+                    }
+                  },
+                  "capacity": {
+                    "value": 5.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Angka contoh, bukan data OPD",
+                      "reference": null
+                    }
+                  }
+                },
+                "outputs": {
+                  "total": 50.0
+                }
+              },
+              "scenarios": [
+                {
+                  "id": "clarified_scenario",
+                  "label": "Skenario lanjutan (revisi 2)",
+                  "parameters": {
+                    "fleet": {
+                      "value": 17.0,
+                      "origin": {
+                        "kind": "user_input",
+                        "description": "Perubahan lanjutan: 12 + 5",
+                        "reference": null
+                      }
+                    },
+                    "capacity": {
+                      "value": 5.0,
+                      "origin": {
+                        "kind": "synthetic",
+                        "description": "Angka contoh, bukan data OPD",
+                        "reference": null
+                      }
+                    }
+                  },
+                  "outputs": {
+                    "total": {
+                      "baselineValue": 50.0,
+                      "scenarioValue": 85.0,
+                      "delta": 35.0,
+                      "percentageChange": 70.0
+                    }
+                  }
+                }
+              ]
+            },
+            "pending": null,
+            "activeScenarioId": "clarified_scenario"
+          },
+          "failures": []
+        }
+      ],
+      "automaticChecks": "pass"
+    },
+    {
+      "id": "P03",
+      "name": "Kelanjutan dengan acuan eksplisit di antara alternatif",
+      "review": "Acuan eksplisit langsung dihitung tanpa pertanyaan pilihan ulang. Alternatif add_five yang berada di urutan terakhir tidak otomatis dipakai.",
+      "manualReview": "pending",
+      "steps": [
+        {
+          "message": "Lanjutkan skenario Tambah dua armada (12 armada), lalu tambah lima armada dari skenario itu. Gunakan kapasitas per armada yang sama. Pertahankan baseline awal 10 armada.",
+          "expect": {
+            "baseline": 50,
+            "scenarioValues": [
+              85
+            ],
+            "pending": null
+          },
+          "seconds": 3.14,
+          "tools": [
+            {
+              "tool": "clarify_simulation",
+              "argumentKeys": [
+                "parameterId",
+                "amount",
+                "reference"
+              ],
+              "status": "success",
+              "code": null,
+              "issues": []
+            }
+          ],
+          "answer": "Acuan: Tambah dua armada. Jumlah armada: 12 + 5 = **17 armada**.\n\n### Simulasi kapasitas armada — data sintetis\n\nMembandingkan kapasitas harian setelah penambahan armada\n\nAsal input: Input pengguna · Data sintetis.\n\nPerbandingan terhadap **kondisi awal (baseline)**. Hasil dihitung oleh engine simulasi.\n\n**Kondisi awal:** Jumlah armada: 10 armada; Kapasitas per armada: 5 ton/hari/armada.\n\n#### Kapasitas total (ton/hari)\n\n| Skenario | Hasil | Selisih | Perubahan |\n|---|---:|---:|---:|\n| Kondisi awal | **50** | — | — |\n| Skenario lanjutan (revisi 2) | **85** | +35 | +70% |\n\n**Asumsi**\n\n- Kapasitas setiap armada sama dan tenaga kerja mencukupi\n\n**Keterbatasan**\n\n- Belum memperhitungkan rute, downtime, dan kapasitas fasilitas\n- Hasil mengikuti data dan rumus yang diberikan; bukan bukti dampak kausal kebijakan.\n\n#### Detail perhitungan dan asal nilai\n\n| Hasil | Satuan | Rumus |\n|---|---|---|\n| Kapasitas total | ton/hari | fleet \\* capacity |\n\n**Parameter baseline**\n\n| Parameter | Nilai | Satuan | Asal nilai |\n|---|---:|---|---|\n| Jumlah armada | 10 | armada | Data sintetis: Angka contoh, bukan data OPD |\n| Kapasitas per armada | 5 | ton/hari/armada | Data sintetis: Angka contoh, bukan data OPD |\n\n**Perubahan input: Skenario lanjutan (revisi 2)**\n\n| Parameter | Nilai | Satuan | Asal nilai |\n|---|---:|---|---|\n| Jumlah armada | 17 | armada | Input pengguna: Perubahan lanjutan: 12 \\+ 5 |\n| Kapasitas per armada | 5 | ton/hari/armada | Data sintetis: Angka contoh, bukan data OPD |\n\nParameter yang tidak ditimpa mengikuti kondisi awal. Asal nilai merupakan deklarasi input, bukan verifikasi sumber otomatis.",
+          "state": {
+            "revision": 2,
+            "result": {
+              "definition": {
+                "schemaVersion": "1",
+                "title": "Simulasi kapasitas armada — data sintetis",
+                "objective": "Membandingkan kapasitas harian setelah penambahan armada",
+                "parameters": [
+                  {
+                    "id": "fleet",
+                    "label": "Jumlah armada",
+                    "unit": "armada",
+                    "baselineValue": 10.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Angka contoh, bukan data OPD",
+                      "reference": null
+                    },
+                    "minimum": 0.0,
+                    "maximum": 100.0
+                  },
+                  {
+                    "id": "capacity",
+                    "label": "Kapasitas per armada",
+                    "unit": "ton/hari/armada",
+                    "baselineValue": 5.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Angka contoh, bukan data OPD",
+                      "reference": null
+                    },
+                    "minimum": 0.0,
+                    "maximum": null
+                  }
+                ],
+                "outputs": [
+                  {
+                    "id": "total",
+                    "label": "Kapasitas total",
+                    "unit": "ton/hari",
+                    "expression": "fleet * capacity"
+                  }
+                ],
+                "scenarios": [
+                  {
+                    "id": "clarified_scenario",
+                    "label": "Skenario lanjutan (revisi 2)",
+                    "overrides": {
+                      "fleet": {
+                        "value": 17.0,
+                        "origin": {
+                          "kind": "user_input",
+                          "description": "Perubahan lanjutan: 12 + 5",
+                          "reference": null
+                        }
+                      },
+                      "capacity": {
+                        "value": 5.0,
+                        "origin": {
+                          "kind": "synthetic",
+                          "description": "Angka contoh, bukan data OPD",
+                          "reference": null
+                        }
+                      }
+                    }
+                  }
+                ],
+                "assumptions": [
+                  "Kapasitas setiap armada sama dan tenaga kerja mencukupi"
+                ],
+                "limitations": [
+                  "Belum memperhitungkan rute, downtime, dan kapasitas fasilitas"
+                ]
+              },
+              "baseline": {
+                "parameters": {
+                  "fleet": {
+                    "value": 10.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Angka contoh, bukan data OPD",
+                      "reference": null
+                    }
+                  },
+                  "capacity": {
+                    "value": 5.0,
+                    "origin": {
+                      "kind": "synthetic",
+                      "description": "Angka contoh, bukan data OPD",
+                      "reference": null
+                    }
+                  }
+                },
+                "outputs": {
+                  "total": 50.0
+                }
+              },
+              "scenarios": [
+                {
+                  "id": "clarified_scenario",
+                  "label": "Skenario lanjutan (revisi 2)",
+                  "parameters": {
+                    "fleet": {
+                      "value": 17.0,
+                      "origin": {
+                        "kind": "user_input",
+                        "description": "Perubahan lanjutan: 12 + 5",
+                        "reference": null
+                      }
+                    },
+                    "capacity": {
+                      "value": 5.0,
+                      "origin": {
+                        "kind": "synthetic",
+                        "description": "Angka contoh, bukan data OPD",
+                        "reference": null
+                      }
+                    }
+                  },
+                  "outputs": {
+                    "total": {
+                      "baselineValue": 50.0,
+                      "scenarioValue": 85.0,
+                      "delta": 35.0,
+                      "percentageChange": 70.0
+                    }
+                  }
+                }
+              ]
+            },
+            "pending": null,
+            "activeScenarioId": "clarified_scenario"
+          },
+          "failures": []
+        }
+      ],
+      "automaticChecks": "pass"
+    }
+  ],
+  "corpusVersion": 2,
+  "assistantTranscriptReview": {
+    "status": "pass_for_tested_flows",
+    "scope": "P01–P03 only; no browser or independent domain approval",
+    "notes": [
+      "P01: 50 to 60/75, no pending reference; stated assumptions retained in this execution.",
+      "P02: asks 15/17, natural ordinal answer resolves to 85.",
+      "P03: explicit named scenario calls clarify_simulation with reference; directly computes 85 without pending.",
+      "After this live run, identical inherited input rows were hidden by the renderer; that presentation refinement was checked in automated tests."
+    ]
+  }
+}

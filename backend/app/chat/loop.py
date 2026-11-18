@@ -30,13 +30,14 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
 from app.chat.client import ModelChunk, ModelClient
-from app.chat.events import artifact, done, error, reasoning, step, token
+from app.chat.events import artifact, done, error, reasoning, simulation_result, step, token
 from app.chat.prompt import system_message
 from app.chat.simulation_status import SIMULATION_TOOLS, SimulationStatus
 from app.config import settings
 from app.models import ArtifactVersion, Attachment, ChatSession, Message
 from app.simulation.conversation import resolve_clarification
 from app.simulation.presentation import render_simulation
+from app.simulation.schemas import SimulationReport
 from app.storage import open_blob
 from app.tools.context import ToolContext
 from app.tools.registry import ToolError, ToolRegistry
@@ -200,6 +201,7 @@ async def run_turn(
     bound to the new user `Message` so the frontend renders their chips.
     """
     try:
+        ctx.simulation_report = None
         # Snapshot prior history before adding this turn's user message.
         history = _history_messages(session)
 
@@ -246,10 +248,19 @@ async def run_turn(
             except ValueError as exc:
                 ctx.simulation_reply = str(exc)
             reply = ctx.simulation_reply or "Pilihan tidak dapat diproses."
-            assistant_reply = Message(session_id=session.id, role="assistant", content=reply)
+            reports = (
+                [ctx.simulation_report.model_dump(mode="json", by_alias=True)]
+                if ctx.simulation_report is not None
+                else None
+            )
+            assistant_reply = Message(
+                session_id=session.id, role="assistant", content=reply, simulation_results=reports
+            )
             db.add(assistant_reply)
             db.commit()
             yield token(reply)
+            if reports:
+                yield simulation_result(reports)
             yield done(message_id=assistant_reply.id)
             return
 
@@ -270,6 +281,7 @@ async def run_turn(
         yield step("thinking", "active")
 
         final_text_parts: list[str] = []
+        reports = None
         iteration = 0
         force_final = False
         current_turn_artifact_versions: list[str] = []
@@ -316,6 +328,10 @@ async def run_turn(
                     final_text_parts.append(reply)
                     yield token(reply)
                 elif simulation_status.results:
+                    reports = [
+                        SimulationReport(result=result).model_dump(mode="json", by_alias=True)
+                        for result in simulation_status.results
+                    ]
                     reply = "\n\n---\n\n".join(
                         render_simulation(result) for result in simulation_status.results
                     )
@@ -399,6 +415,8 @@ async def run_turn(
             if ctx.simulation_reply is not None:
                 # Clarification questions and resolved numeric tables come from the server.
                 # Do not allow an extra model pass to rewrite their options/arithmetic.
+                if ctx.simulation_report is not None and not simulation_status.blocked:
+                    reports = [ctx.simulation_report.model_dump(mode="json", by_alias=True)]
                 final_text_parts.append(ctx.simulation_reply)
                 yield token(ctx.simulation_reply)
                 yield step("thinking", "complete")
@@ -407,7 +425,7 @@ async def run_turn(
 
         final_text = "".join(final_text_parts)
         assistant_msg = Message(
-            session_id=session.id, role="assistant", content=final_text
+            session_id=session.id, role="assistant", content=final_text, simulation_results=reports
         )
         db.add(assistant_msg)
         db.flush()  # assign assistant_msg.id so we can link artifacts
@@ -422,6 +440,8 @@ async def run_turn(
         session.updated_at = datetime.now(timezone.utc)
         db.commit()
 
+        if reports:
+            yield simulation_result(reports)
         yield done(message_id=assistant_msg.id)
     except Exception as exc:  # noqa: BLE001 - last-resort guard, never raise out of the generator
         yield error(f"Chat turn failed: {exc}")

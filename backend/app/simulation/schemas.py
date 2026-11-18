@@ -11,7 +11,7 @@ from typing import Annotated, Literal
 
 from pydantic import ConfigDict, Field, StrictFloat, model_validator
 
-from app.schemas import CamelModel
+from app.schema_base import CamelModel
 
 Identifier = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=64)]
 NonEmptyText = Annotated[str, Field(min_length=1)]
@@ -149,3 +149,10 @@ class SimulationResult(SimulationModel):
     definition: SimulationDefinition
     baseline: BaselineResult
     scenarios: list[ScenarioResult]
+
+
+class SimulationReport(SimulationModel):
+    """Message-owned display payload; references one completed engine calculation."""
+
+    result: SimulationResult
+    reference_change: str | None = None

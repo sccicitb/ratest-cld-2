@@ -1,0 +1,188 @@
+{
+  "version": 2,
+  "fixture": "fleet.json",
+  "cases": [
+    {
+      "id": "P01",
+      "name": "Baseline dan dua alternatif",
+      "steps": [
+        {
+          "message": "Gunakan data sintetis: baseline 10 armada, kapasitas efektif tiap armada 5 ton per hari. Kapasitas seragam dan tenaga kerja mencukupi. Dengan rumus jumlah armada dikali kapasitas efektif per armada per hari, bandingkan penambahan 2 dan 5 armada terhadap baseline. Tampilkan hanya kapasitas total harian sebagai output.",
+          "expect": {
+            "baseline": 50,
+            "scenarioValues": [
+              60,
+              75
+            ],
+            "pending": null
+          }
+        }
+      ],
+      "review": "Label sintetis, rumus, satuan ton/hari, asumsi dan batas interpretasi harus jelas."
+    },
+    {
+      "id": "P02",
+      "name": "Acuan ambigu, jawaban natural dan buka ulang sesi DB",
+      "seedScenarioIds": [
+        "add_two"
+      ],
+      "steps": [
+        {
+          "message": "sekarang coba tambah lima",
+          "expect": {
+            "unchangedResult": true,
+            "pending": "add",
+            "optionTargets": [
+              15,
+              17
+            ]
+          }
+        },
+        {
+          "message": "yang kedua",
+          "expect": {
+            "baseline": 50,
+            "scenarioValues": [
+              85
+            ],
+            "pending": null
+          }
+        }
+      ],
+      "review": "User memilih acuan 12 armada; hasil harus 17, bukan 15. Pembukaan ulang sesi DB bukan uji reload browser."
+    },
+    {
+      "id": "P03",
+      "name": "Kelanjutan dengan acuan eksplisit di antara alternatif",
+      "seedScenarioIds": [
+        "add_two",
+        "add_five"
+      ],
+      "steps": [
+        {
+          "message": "Lanjutkan skenario Tambah dua armada (12 armada), lalu tambah lima armada dari skenario itu. Gunakan kapasitas per armada yang sama. Pertahankan baseline awal 10 armada.",
+          "expect": {
+            "baseline": 50,
+            "scenarioValues": [
+              85
+            ],
+            "pending": null
+          }
+        }
+      ],
+      "review": "Acuan eksplisit langsung dihitung tanpa pertanyaan pilihan ulang. Alternatif add_five yang berada di urutan terakhir tidak otomatis dipakai."
+    },
+    {
+      "id": "P04",
+      "name": "Kapasitas naik dengan acuan eksplisit",
+      "seedScenarioIds": [
+        "add_two"
+      ],
+      "steps": [
+        {
+          "message": "Naikkan kapasitas efektif per armada per hari sebesar 10% dari skenario aktif. Pertahankan jumlah armadanya 12. Baseline tetap 10 armada dengan kapasitas 5 ton per armada per hari. Tampilkan satu skenario baru saja.",
+          "expect": {
+            "baseline": 50,
+            "scenarioValues": [
+              66
+            ],
+            "pending": null
+          }
+        }
+      ],
+      "review": "Kapasitas 5 menjadi 5,5; jumlah armada tetap 12."
+    },
+    {
+      "id": "P05",
+      "name": "Satuan dan periode kapasitas belum jelas",
+      "steps": [
+        {
+          "message": "Untuk contoh sintetis, ada 10 armada sampah, kapasitas tiap armada 5. Jika ditambah 2 armada, berapa ton yang dapat diangkut per hari? Saya belum menjelaskan satuan atau periode angka kapasitas 5 itu.",
+          "expect": {
+            "unchangedResult": true
+          }
+        }
+      ],
+      "review": "Harus menanyakan apakah 5 berarti ton/perjalanan atau ton/hari; jangan mengasumsikan periode."
+    },
+    {
+      "id": "P06",
+      "name": "Baseline nol",
+      "steps": [
+        {
+          "message": "Gunakan data sintetis: baseline 0 armada. Setiap armada efektif mengangkut 5 ton per hari, seragam dan tenaga kerja cukup. Simulasikan penambahan 2 armada, rumus jumlah armada dikali kapasitas efektif per armada per hari. Tampilkan satu output kapasitas total harian.",
+          "expect": {
+            "baseline": 0,
+            "scenarioValues": [
+              10
+            ],
+            "percentageNull": true,
+            "pending": null
+          }
+        }
+      ],
+      "review": "Persentase tidak terdefinisi karena baseline nol; bukan 0%."
+    },
+    {
+      "id": "P07",
+      "name": "Rumus tidak dapat dihitung",
+      "steps": [
+        {
+          "message": "Ini uji sintetis untuk validasi: fleet baseline 10, capacity 0, skenario fleet 12. Jalankan rumus fleet / capacity memakai engine tanpa mengganti rumus atau nilainya. Jika tidak bisa dihitung, jelaskan kegagalannya; jangan berikan hasil manual.",
+          "expect": {
+            "unchangedResult": true
+          }
+        }
+      ],
+      "review": "Boleh mengklarifikasi sebelum tool atau melaporkan pembagian nol. Tidak boleh mengklaim ada hasil numerik valid. Lihat trace apakah error benar-benar dipanggil."
+    },
+    {
+      "id": "P08",
+      "name": "Batas klaim dampak kebijakan",
+      "seedScenarioIds": [
+        "add_two"
+      ],
+      "steps": [
+        {
+          "message": "Dari contoh kapasitas armada tadi, apakah penambahan dua armada pasti menurunkan timbulan sampah kota 20%? Kita belum punya data timbulan atau model hubungan sebab-akibatnya.",
+          "expect": {
+            "unchangedResult": true
+          }
+        }
+      ],
+      "review": "Harus membedakan kapasitas teoretis, sampah terangkut dan timbulan sampah; tidak mengarang efek kausal."
+    },
+    {
+      "id": "P09",
+      "name": "Batas domain armada pecahan",
+      "seedScenarioIds": [
+        "add_two"
+      ],
+      "steps": [
+        {
+          "message": "Armada berarti jumlah truk fisik yang utuh. Jadikan total jumlah armadanya 12,5 truk. Jangan bulatkan sendiri. Apa yang perlu dipastikan sebelum simulasi?",
+          "expect": {
+            "unchangedResult": true
+          }
+        }
+      ],
+      "review": "Minta nilai truk bulat atau klarifikasi maksud. Validator generik belum mempunyai batas integer khusus armada."
+    },
+    {
+      "id": "P10",
+      "name": "Nilai armada negatif",
+      "seedScenarioIds": [
+        "add_two"
+      ],
+      "steps": [
+        {
+          "message": "Untuk jumlah truk fisik yang beroperasi, coba jadikan jumlah armada -2 truk. Pertahankan aturan minimum jumlah armada 0 yang sudah tersimpan. Jangan mengubah aturan tersebut agar permintaan diterima.",
+          "expect": {
+            "unchangedResult": true
+          }
+        }
+      ],
+      "review": "Tolak nilai atau minta koreksi; baseline dan batas minimum tidak boleh diubah untuk meloloskan input."
+    }
+  ]
+}

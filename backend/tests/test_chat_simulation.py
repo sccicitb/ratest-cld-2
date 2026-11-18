@@ -130,8 +130,8 @@ def test_turn_delivers_simulation_result_to_model_and_persists_answer(simulation
     assert events[-1]["type"] == "done"
     streamed = "".join(event["content"] for event in events if event["type"] == "token")
     if kind == "success":
-        assert "| Kapasitas total | ton/hari | 50 | 60 | 10 | 20% |" in streamed
-        assert "| Kapasitas total | ton/hari | 50 | 75 | 25 | 50% |" in streamed
+        assert "| Tambah dua armada | **60** | +10 | +20% |" in streamed
+        assert "| Tambah lima armada | **75** | +25 | +50% |" in streamed
         assert streamed != model.answer
     else:
         assert "Belum ada hasil perhitungan baru" in streamed
@@ -142,6 +142,15 @@ def test_turn_delivers_simulation_result_to_model_and_persists_answer(simulation
         )
         assert [message.role for message in messages] == ["user", "assistant"]
         assert messages[-1].content == streamed
+        payload = messages[-1].simulation_results
+        visual_events = [e for e in events if e["type"] == "simulation_result"]
+        if kind == "success":
+            assert payload[0]["result"] == model.tool_response["result"]
+            assert visual_events == [{"type": "simulation_result", "reports": payload}]
+            assert events[-2] == visual_events[0]
+        else:
+            assert payload is None
+            assert visual_events == []
 
 
 def _single_definition():
@@ -180,6 +189,11 @@ def _guard_turn(simulation_session, script, *, seed=False, registry=None):
             )
             if seed:
                 await RunSimulation().execute(_single_definition(), ctx)
+                if seed == "pending":
+                    from app.simulation.conversation import request_clarification
+
+                    request_clarification(ctx, "fleet", 5)
+                    ctx.simulation_reply = None
             before = deepcopy(session.simulation_state)
             events = [
                 e
@@ -194,7 +208,16 @@ def _guard_turn(simulation_session, script, *, seed=False, registry=None):
             ]
             after = deepcopy(session.simulation_state)
             assert events[-1]["type"] == "done"
-            saved = db.get(Message, events[-1]["messageId"]).content
+            assistant_message = db.get(Message, events[-1]["messageId"])
+            saved = assistant_message.content
+            visual_events = [e for e in events if e["type"] == "simulation_result"]
+            assert visual_events == (
+                [{"type": "simulation_result", "reports": assistant_message.simulation_results}]
+                if assistant_message.simulation_results
+                else []
+            )
+            if "belum berhasil diselesaikan" in saved:
+                assert assistant_message.simulation_results is None
             streamed = "".join(e.get("content", "") for e in events if e["type"] == "token")
             assert saved == streamed
             return events, saved, before, after
@@ -250,7 +273,7 @@ def test_later_successful_retry_releases_normal_answer(simulation_session):
             [ModelChunk(type="text", text="Kapasitas hasil engine: 60 ton/hari.")],
         ],
     )
-    assert "| Kapasitas total | ton/hari | 50 | 60 | 10 | 20% |" in saved
+    assert "| Tambah dua armada | **60** | +10 | +20% |" in saved
     assert not any("HIDDEN_RETRY_MATH" in e.get("content", "") for e in events)
     assert after["result"]["scenarios"][0]["outputs"]["total"]["scenarioValue"] == 60
 
@@ -401,7 +424,7 @@ def test_success_then_later_failure_stays_partial(simulation_session):
 def test_success_after_mixed_round_recovers(simulation_session):
     corrected = _single_definition()
     corrected["scenarios"][0]["overrides"]["fleet"]["value"] = 14
-    _, saved, _, after = _guard_turn(
+    events, saved, _, after = _guard_turn(
         simulation_session,
         [
             [_call_definition(_single_definition(), "good"), _call_definition({}, "bad")],
@@ -409,8 +432,13 @@ def test_success_after_mixed_round_recovers(simulation_session):
             [ModelChunk(type="text", text="Hasil engine setelah koreksi: 70 ton/hari.")],
         ],
     )
-    assert "| Kapasitas total | ton/hari | 50 | 70 | 20 | 40% |" in saved
+    assert "| Tambah dua armada | **70** | +20 | +40% |" in saved
     assert after["result"]["scenarios"][0]["outputs"]["total"]["scenarioValue"] == 70
+
+    assert [
+        r["result"]["scenarios"][0]["outputs"]["total"]["scenarioValue"]
+        for r in events[-2]["reports"]
+    ] == [70]
 
 
 def test_failed_calculation_can_recover_with_server_clarification(simulation_session):
@@ -448,14 +476,14 @@ def test_successful_engine_result_replaces_false_model_numbers_everywhere(simula
     )
     assert "HIDDEN_SUCCESS_999" not in saved
     assert not any("HIDDEN_SUCCESS_999" in e.get("content", "") for e in events)
-    assert "| Kapasitas total | ton/hari | 50 | 60 | 10 | 20% |" in saved
+    assert "| Tambah dua armada | **60** | +10 | +20% |" in saved
 
 
 def test_multiple_successes_in_one_round_show_each_report(simulation_session):
     second = _single_definition()
     second["title"] = "Skenario kedua"
     second["scenarios"][0]["overrides"]["fleet"]["value"] = 14
-    _, saved, _, after = _guard_turn(
+    events, saved, _, after = _guard_turn(
         simulation_session,
         [
             [_call_definition(_single_definition(), "a"), _call_definition(second, "b")],
@@ -463,6 +491,82 @@ def test_multiple_successes_in_one_round_show_each_report(simulation_session):
         ],
     )
     assert "HIDDEN_EXTRA_COMPARISON" not in saved
-    assert "| 50 | 60 | 10 | 20% |" in saved
-    assert "| 50 | 70 | 20 | 40% |" in saved
+    assert "| **60** | +10 | +20% |" in saved
+    assert "| **70** | +20 | +40% |" in saved
     assert after["result"]["scenarios"][0]["outputs"]["total"]["scenarioValue"] == 70
+
+    assert [
+        r["result"]["scenarios"][0]["outputs"]["total"]["scenarioValue"]
+        for r in events[-2]["reports"]
+    ] == [60, 70]
+
+
+@pytest.mark.parametrize("wrapper", ["definition", "arguments"])
+def test_wrapped_call_uses_existing_engine_display_and_saved_state(simulation_session, wrapper):
+    _, saved, _, after = _guard_turn(
+        simulation_session,
+        [
+            [_call_definition({wrapper: _single_definition()})],
+            [ModelChunk(type="text", text="HIDDEN_WRAPPED_MANUAL_MATH")],
+        ],
+    )
+    assert "| Tambah dua armada | **60** | +10 | +20% |" in saved
+    assert "HIDDEN_WRAPPED_MANUAL_MATH" not in saved
+    assert after["activeScenarioId"] == "add_two"
+    assert after["result"]["definition"]["parameters"][0]["baselineValue"] == 10
+    assert "definition" not in after["result"]["definition"]
+    assert after["result"]["scenarios"][0]["outputs"]["total"]["scenarioValue"] == 60
+
+
+def test_bad_shape_then_corrected_envelope_recovers_without_manual_result(simulation_session):
+    bad = _single_definition()
+    bad["scenarios"] = json.dumps(bad["scenarios"])
+    _, saved, before, after = _guard_turn(
+        simulation_session,
+        [
+            [_call_definition({"definition": bad}, "bad_shape")],
+            [_call_definition({"arguments": _single_definition()}, "corrected")],
+            [ModelChunk(type="text", text="HIDDEN_COERCED_RESULT")],
+        ],
+        seed=True,
+    )
+    assert "HIDDEN_COERCED_RESULT" not in saved
+    assert "| Tambah dua armada | **60** | +10 | +20% |" in saved
+    assert after["revision"] == before["revision"] + 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"definition": {}, "scope": "other-session"},
+        {"definition": {"arguments": {}}},
+    ],
+)
+def test_rejected_envelope_preserves_previous_snapshot(simulation_session, payload):
+    _, saved, before, after = _guard_turn(
+        simulation_session,
+        [
+            [_call_definition(payload)],
+            [ModelChunk(type="text", text="HIDDEN_ENVELOPE_SUCCESS")],
+        ],
+        seed=True,
+    )
+    assert "HIDDEN_ENVELOPE_SUCCESS" not in saved
+    assert before == after
+    assert "sebelumnya bukan hasil permintaan ini" in saved
+
+
+@pytest.mark.parametrize("wrapper", ["definition", "arguments"])
+def test_envelope_cannot_overwrite_a_pending_reference_selection(simulation_session, wrapper):
+    _, saved, before, after = _guard_turn(
+        simulation_session,
+        [
+            [_call_definition({wrapper: _single_definition()}, "overwrite_attempt")],
+            [ModelChunk(type="text", text="HIDDEN_PENDING_OVERWRITE")],
+        ],
+        seed="pending",
+    )
+    assert "HIDDEN_PENDING_OVERWRITE" not in saved
+    assert "klarifikasi" in saved
+    assert before == after
+    assert after["pending"]["kind"] == "add"

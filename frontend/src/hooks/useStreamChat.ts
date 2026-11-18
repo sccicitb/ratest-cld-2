@@ -3,6 +3,8 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, streamChat, streamResume } from "@/lib/api";
 import { queryKeys } from "@/lib/queries";
+import { parseSimulationReports } from "@/lib/simulation";
+import type { SimulationReport } from "@/lib/simulation";
 import type {
   ArtifactSummary,
   Attachment,
@@ -24,6 +26,8 @@ export function useStreamChat(sessionId: string) {
   const qc = useQueryClient();
   const [isStreaming, setIsStreaming] = useState(false);
   const [steps, setSteps] = useState<StepState[]>([]);
+  const [streamedSimulationResults, setStreamedSimulationResults] =
+    useState<SimulationReport[] | null>(null);
   const [streamedContent, setStreamedContent] = useState("");
   const [streamedReasoning, setStreamedReasoning] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +45,7 @@ export function useStreamChat(sessionId: string) {
   const reset = useCallback(() => {
     setSteps([]);
     setStreamedContent("");
+    setStreamedSimulationResults(null);
     setStreamedReasoning("");
     setError(null);
     setCurrentArtifact(null);
@@ -88,6 +93,7 @@ export function useStreamChat(sessionId: string) {
               // only the final answer streams in (matches what gets persisted).
               if (event.step === "calling_tool" && event.status === "active") {
                 setStreamedContent("");
+                setStreamedSimulationResults(null);
               }
               // Steps with an id (repeatable tool calls) are keyed by id;
               // single-occurrence pipeline steps are keyed by their name.
@@ -124,6 +130,9 @@ export function useStreamChat(sessionId: string) {
                 latestVersion: event.version,
                 createdAt: new Date().toISOString(),
               });
+              break;
+            case "simulation_result":
+              setStreamedSimulationResults(parseSimulationReports(event.reports));
               break;
             case "done":
               break;
@@ -203,6 +212,7 @@ export function useStreamChat(sessionId: string) {
     isStreaming,
     steps,
     streamedContent,
+    streamedSimulationResults,
     streamedReasoning,
     error,
     currentArtifact,

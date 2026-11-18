@@ -14,6 +14,7 @@ from app.simulation.schemas import Identifier, SimulationModel
 class RequestClarification(SimulationModel):
     parameter_id: Identifier | None = None
     amount: StrictFloat | None = None
+    reference: str | None = Field(default=None, min_length=1, max_length=80)
 
 
 class ResolveClarification(SimulationModel):
@@ -31,7 +32,15 @@ class ClarifySimulation:
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "Ask clickable clarification when an additive follow-up (e.g. tambah lima) has ambiguous baseline vs last-scenario reference. Requires a previously saved simulation. To ask which existing scenario should become active without calculating, omit parameterId and amount. Supply the parameter ID and additive amount ONLY; the server builds and anchors options. Do not choose a reference yourself. One active question per session.",
+                "description": (
+                    "Handle an additive FOLLOW-UP to a saved simulation. With parameterId and amount, "
+                    "omit reference if the user did not state the source: the server asks clickable options. "
+                    "If the user explicitly names the source, supply reference='baseline', 'last_scenario' "
+                    "(only a known active identity), or 'scenario:<stored ID>' to calculate immediately. "
+                    "Never invent a reference or interpret a set-total request as an increment. "
+                    "Omit all arguments ONLY if the user asks to choose a scenario to continue. "
+                    "Do not ask for a choice merely because a comparison has several alternatives."
+                ),
                 "parameters": RequestClarification.model_json_schema(by_alias=True),
             },
         }
@@ -39,10 +48,15 @@ class ClarifySimulation:
     async def execute(self, args, ctx):
         try:
             parsed = RequestClarification.model_validate(args)
-            pending = request_clarification(ctx, parsed.parameter_id, parsed.amount)
-            return json.dumps(
-                {"status": "needs_clarification", "pending": pending}, ensure_ascii=False
+            outcome = request_clarification(
+                ctx, parsed.parameter_id, parsed.amount, parsed.reference
             )
+            response = (
+                outcome
+                if parsed.reference is not None
+                else {"status": "needs_clarification", "pending": outcome}
+            )
+            return json.dumps(response, ensure_ascii=False, allow_nan=False)
         except ValidationError:
             return json.dumps(
                 {

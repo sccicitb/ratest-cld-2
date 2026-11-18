@@ -139,6 +139,7 @@ class Message(Base):
     )
     role: Mapped[str] = mapped_column(String)  # user | assistant | system
     content: Mapped[str] = mapped_column(Text)
+    simulation_results: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     session: Mapped["ChatSession"] = relationship(back_populates="messages")

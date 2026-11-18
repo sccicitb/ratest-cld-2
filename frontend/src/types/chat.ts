@@ -1,3 +1,4 @@
+import type { SimulationReport } from "@/lib/simulation";
 import type { KnowledgeBaseFile } from "./kb";
 
 export interface Session {
@@ -29,6 +30,7 @@ export interface Message {
   sessionId: string;
   role: MessageRole;
   content: string;
+  simulationResults?: SimulationReport[] | null;
   attachments?: Attachment[];
   createdAt: string;
 }
@@ -74,6 +76,11 @@ export interface ChunkProgressEvent {
   total: number;
 }
 
+export interface SimulationResultEvent {
+  type: "simulation_result";
+  reports: SimulationReport[];
+}
+
 export interface DoneEvent {
   type: "done";
   messageId: string;
@@ -98,7 +105,8 @@ export type StreamEvent =
   | ChunkProgressEvent
   | DoneEvent
   | ErrorEvent
-  | ArtifactEvent;
+  | ArtifactEvent
+  | SimulationResultEvent;
 
 /** Returned by GET /api/sessions/{sid}/artifacts */
 export interface ArtifactSummary {

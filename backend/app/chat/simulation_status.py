@@ -63,6 +63,7 @@ class SimulationStatus:
                 continue
             if status == "success" and name in {
                 "run_simulation",
+                "clarify_simulation",
                 "resolve_simulation_clarification",
             }:
                 try:

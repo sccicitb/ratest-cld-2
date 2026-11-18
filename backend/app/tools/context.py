@@ -4,6 +4,7 @@
 touches retrieval; they come from the authenticated request, never from
 model-supplied tool-call `args`. See `app/tools/builtin/search_kb.py`.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -13,6 +14,7 @@ from typing import Any
 from qdrant_client import QdrantClient
 
 from app.rag.embedder import Embedder
+from app.simulation.schemas import SimulationReport
 
 
 @dataclass
@@ -24,6 +26,7 @@ class ToolContext:
     embedder: Embedder
     simulation_selection: dict | None = None
     simulation_reply: str | None = None
+    simulation_report: SimulationReport | None = None
     on_progress: Callable[[str], None] | None = None
     pending_artifacts: list[dict] = field(default_factory=list)
     """Populated by `create_artifact`; drained by the loop for SSE events + message linkage."""

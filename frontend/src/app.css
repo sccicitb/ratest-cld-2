@@ -139,6 +139,7 @@
 /* Markdown prose styling for assistant messages */
 .prose-chat {
   line-height: 1.65;
+  overflow-wrap: anywhere;
 }
 .prose-chat p {
   margin-bottom: 0.75rem;
@@ -161,7 +162,8 @@
 }
 .prose-chat h1,
 .prose-chat h2,
-.prose-chat h3 {
+.prose-chat h3,
+.prose-chat h4 {
   font-weight: 600;
   margin: 1rem 0 0.5rem;
   line-height: 1.3;
@@ -208,18 +210,420 @@
   color: var(--muted-foreground);
   margin: 0.75rem 0;
 }
+.prose-chat h4 {
+  font-size: 0.95rem;
+}
+.prose-chat > :first-child {
+  margin-top: 0;
+}
+.chat-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.85rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.chat-table-scroll:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
 .prose-chat table {
   border-collapse: collapse;
-  margin: 0.75rem 0;
-  font-size: 0.9rem;
+  width: 100%;
+  margin: 0;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
 }
 .prose-chat th,
 .prose-chat td {
   border: 1px solid var(--border);
-  padding: 0.4rem 0.6rem;
+  padding: 0.6rem 0.8rem;
   text-align: left;
 }
 .prose-chat th {
   background: var(--muted);
   font-weight: 600;
+}
+
+.prose-chat tbody tr:nth-child(even) {
+  background: color-mix(in oklch, var(--background) 40%, transparent);
+}
+.prose-chat td {
+  min-width: 6rem;
+}
+
+/* Engine-backed simulation cards. Native SVG: no chart dependency or external assets. */
+.simulation-answer {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 1.25rem;
+}
+.simulation-result {
+  --simulation-color: var(--brand-blue);
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: 0 3px 16px color-mix(in oklch, var(--foreground) 4%, transparent);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.simulation-result-header {
+  padding: 1.25rem 1.25rem 1rem;
+  background: linear-gradient(
+    135deg,
+    color-mix(in oklch, var(--simulation-color) 7%, var(--card)),
+    var(--card)
+  );
+  border-bottom: 1px solid var(--border);
+}
+.simulation-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--simulation-color);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+.simulation-result-header h3 {
+  font-size: 1.125rem;
+  line-height: 1.4;
+  font-weight: 650;
+  margin: 0.5rem 0;
+  text-wrap: pretty;
+}
+.simulation-result-header > p {
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+}
+.simulation-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.85rem;
+}
+.simulation-badges > span {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 2rem;
+  background: var(--card);
+  font-size: 0.65rem;
+}
+.simulation-result-body {
+  padding: 1.25rem;
+}
+.simulation-reference {
+  padding: 0.7rem 0.85rem;
+  background: var(--muted);
+  border-left: 3px solid var(--simulation-color);
+  border-radius: 0.4rem;
+  margin-bottom: 1rem;
+  font-size: 0.8rem;
+}
+.simulation-controls {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.simulation-indicator {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: 0.25rem;
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+}
+.simulation-indicator strong {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.simulation-indicator select {
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 0.8rem;
+}
+.simulation-view-switch {
+  display: flex;
+  gap: 0.2rem;
+  background: var(--muted);
+  border-radius: 0.5rem;
+  padding: 0.2rem;
+}
+.simulation-view-switch button {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0.35rem 0.6rem;
+  border-radius: 0.35rem;
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.simulation-view-switch button[aria-pressed="true"] {
+  background: var(--card);
+  color: var(--simulation-color);
+  box-shadow: 0 1px 3px #00000012;
+}
+.simulation-result :is(button, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.simulation-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr));
+  gap: 0.65rem;
+}
+.simulation-metric {
+  min-width: 0;
+  padding: 0.85rem;
+  border: 1px solid
+    color-mix(in oklch, var(--simulation-color) 20%, var(--border));
+  border-radius: 0.65rem;
+  background: color-mix(in oklch, var(--simulation-color) 4%, var(--card));
+}
+.simulation-metric.is-baseline {
+  border-color: var(--border);
+  background: var(--muted);
+}
+.simulation-metric-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.45;
+  margin-bottom: 0.5rem;
+}
+.simulation-metric-value {
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  color: var(--simulation-color);
+}
+.simulation-metric.is-baseline .simulation-metric-value {
+  color: var(--foreground);
+}
+.simulation-metric-unit {
+  display: block;
+  font-size: 0.65rem;
+  color: var(--muted-foreground);
+  margin-top: 0.2rem;
+}
+.simulation-metric-change {
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+  margin-top: 0.65rem;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+.simulation-metric-change > span {
+  color: var(--simulation-color);
+  font-weight: 600;
+}
+.simulation-comparison-note {
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
+  margin: 0.65rem 0 1.25rem;
+}
+.simulation-chart {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+}
+.simulation-chart-rows {
+  display: grid;
+  gap: 1rem;
+}
+.simulation-chart-label {
+  display: grid;
+  grid-template-columns: 0.4rem 1fr;
+  gap: 0.25rem 0.5rem;
+  align-items: baseline;
+  font-size: 0.75rem;
+}
+.simulation-chart-label > strong {
+  grid-column: 2;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+.simulation-chart-label > strong > span {
+  font-size: 0.65rem;
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+.simulation-dot {
+  display: inline-block;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--simulation-color);
+}
+.simulation-dot.is-baseline {
+  background: var(--muted-foreground);
+}
+.simulation-bar {
+  display: block;
+  width: 100%;
+  height: 1rem;
+  margin-top: 0.4rem;
+  overflow: visible;
+}
+.simulation-bar-track {
+  fill: var(--muted);
+}
+.simulation-bar-baseline {
+  fill: var(--muted-foreground);
+}
+.simulation-bar-scenario {
+  fill: var(--simulation-color);
+}
+.simulation-zero {
+  stroke: var(--foreground);
+  stroke-opacity: 0.45;
+  stroke-width: 1;
+}
+.simulation-zero-dot {
+  fill: var(--foreground);
+}
+.simulation-chart-caption {
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
+  margin-top: 1rem;
+}
+.simulation-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+}
+.simulation-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.simulation-table :is(td, th) {
+  padding: 0.7rem 0.85rem;
+  min-width: 5rem;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+}
+.simulation-table thead {
+  background: var(--muted);
+}
+.simulation-table th:first-child {
+  text-align: left;
+  min-width: 9rem;
+  font-weight: 500;
+}
+.simulation-table tbody tr:last-child > * {
+  border-bottom: none;
+}
+.simulation-context-grid {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+.simulation-context {
+  padding-left: 0.8rem;
+  border-left: 2px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.simulation-context h4 {
+  font-size: 0.75rem;
+  color: var(--foreground);
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+.simulation-context ul {
+  list-style: disc;
+  padding-left: 1rem;
+}
+.simulation-context li {
+  margin-bottom: 0.25rem;
+}
+.simulation-context > p {
+  margin-top: 0.35rem;
+}
+.simulation-details {
+  margin-top: 1.25rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+.simulation-details summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--simulation-color);
+  font-weight: 600;
+}
+.simulation-details summary::-webkit-details-marker {
+  display: none;
+}
+.simulation-details[open] summary > svg {
+  transform: rotate(180deg);
+}
+.simulation-details-body {
+  font-size: 0.75rem;
+}
+.simulation-details-body h4 {
+  margin: 1rem 0 0.4rem;
+  font-weight: 600;
+}
+.simulation-formulas {
+  display: grid;
+  gap: 0.5rem;
+}
+.simulation-formulas > div {
+  padding: 0.6rem 0.7rem;
+  background: var(--muted);
+  border-radius: 0.4rem;
+}
+.simulation-formulas dd {
+  font-size: 0.7rem;
+  margin-top: 0.25rem;
+  overflow-wrap: anywhere;
+}
+.simulation-inputs > div {
+  border-bottom: 1px solid var(--border);
+  padding: 0.6rem 0;
+}
+.simulation-inputs p {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+}
+.simulation-inputs strong {
+  font-weight: 500;
+}
+@media (min-width: 640px) {
+  .simulation-chart-label {
+    grid-template-columns: 0.4rem minmax(0, 1fr) auto;
+  }
+  .simulation-chart-label > strong {
+    grid-column: auto;
+  }
+}
+.dark .simulation-result {
+  --simulation-color: #78baf0;
 }

@@ -29,10 +29,13 @@ def test_all_scenarios_outputs_inputs_and_origins_are_shown():
         }
     )
     text = render(data)
-    assert "| Kapasitas total | ton/hari | 50 | 60 | 10 | 20% |" in text
-    assert "| Kapasitas total | ton/hari | 50 | 75 | 25 | 50% |" in text
-    assert "| Dua kali kapasitas | ton/hari | 100 | 150 | 50 | 50% |" in text
-    assert text.count("**Skenario:") == 2
+    assert "| Tambah dua armada | **60** | +10 | +20% |" in text
+    assert "| Tambah lima armada | **75** | +25 | +50% |" in text
+    assert "| Tambah lima armada | **150** | +50 | +50% |" in text
+    assert text.count("**Perubahan input:") == 2
+    assert "#### Dua kali kapasitas (ton/hari)" in text
+    assert text.index("| Kondisi awal |") < text.index("**Asumsi**") < text.index("#### Detail")
+    assert text.count("| Kapasitas per armada |") == 1
     assert "**Parameter baseline**" in text
     assert "| Jumlah armada | 12 | armada | Input pengguna:" in text
     assert "Data sintetis:" in text
@@ -45,7 +48,7 @@ def test_zero_baseline_has_no_percentage_invention():
     data = definition()
     data["parameters"][0]["baselineValue"] = 0
     text = render(data)
-    assert "| 0 | 60 | 60 | Tidak terdefinisi (baseline nol) |" in text
+    assert "| Tambah dua armada | **60** | +60 | Tidak terdefinisi (baseline nol) |" in text
     assert "0%" not in text
 
 
@@ -53,7 +56,7 @@ def test_negative_baseline_keeps_engine_sign_convention():
     data = definition()
     data["outputs"][0]["expression"] = "-fleet * capacity"
     text = render(data)
-    assert "| -50 | -60 | -10 | 20% |" in text
+    assert "| Tambah dua armada | **-60** | -10 | +20% |" in text
 
 
 def test_decimal_precision_is_not_silently_rounded():
@@ -103,3 +106,22 @@ def test_reference_change_uses_the_same_precision_and_escaping():
     )
     assert "A\\|B" in text
     assert "0.123456789 + 0.1 = **0.223456789 ton/hari**" in text
+
+
+def test_inherited_unchanged_inputs_are_not_repeated_but_changed_origins_are_kept():
+    data = definition()
+    parameter = data["parameters"][1]
+    data["scenarios"][0]["overrides"]["capacity"] = {
+        "value": parameter["baselineValue"],
+        "origin": parameter["origin"],
+    }
+    assert render(data).count("| Kapasitas per armada |") == 1
+    data["scenarios"][0]["overrides"]["capacity"]["origin"] = {
+        "kind": "referenced_data",
+        "description": "Same value, new source",
+        "reference": "Dataset A",
+    }
+    text = render(data)
+    assert text.count("| Kapasitas per armada |") == 2
+    assert "Same value, new source; referensi: Dataset A" in text
+    assert "Asal input: Input pengguna · Data sintetis · Data bersumber." in text

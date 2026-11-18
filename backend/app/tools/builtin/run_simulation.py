@@ -17,12 +17,39 @@ MAX_PARAMETERS = 32
 MAX_OUTPUTS = 8
 MAX_SCENARIOS = 8
 
+_WRAPPERS = {"definition", "arguments"}
+_INPUT_HINT = (
+    "Send title and objective as strings; parameters, outputs and scenarios as arrays "
+    "of objects at the top level. Parameter baselineValue and override value must be "
+    "finite numbers, not strings. Do not invent missing values. Follow the tool schema. "
+    "A single definition or arguments object wrapper is accepted, without siblings or nesting."
+)
+
 
 def _error(code: str, message: str, **details) -> str:
     return json.dumps(
         {"status": "error", "code": code, "message": message, **details},
         ensure_ascii=False,
     )
+
+
+def _input_error(message: str, **details) -> str:
+    return _error("invalid_input", message, hint=_INPUT_HINT, **details)
+
+
+def _definition_args(args: dict) -> dict:
+    """Unwrap only a single known envelope; never coerce or merge field values."""
+    wrappers = _WRAPPERS.intersection(args)
+    if not wrappers:
+        return args
+    if len(args) != 1:
+        raise ValueError("A definition/arguments wrapper must be the only top-level field")
+    definition = args[next(iter(wrappers))]
+    if not isinstance(definition, dict):
+        raise TypeError("The definition/arguments wrapper must contain an object")
+    if _WRAPPERS.intersection(definition):
+        raise ValueError("Nested definition/arguments wrappers are not supported")
+    return definition
 
 
 class RunSimulation:
@@ -40,7 +67,7 @@ class RunSimulation:
                 "description": (
                     "Run a structured what-if simulation and compare alternatives against one "
                     "baseline. Use this for scenario arithmetic instead of execute_code. "
-                    "Supply the complete definition using camelCase fields: parameters with "
+                    "Supply the complete definition directly at the top level using camelCase fields: parameters with "
                     "baselineValue, unit, origin; outputs with expression; and scenarios with "
                     "overrides mapping parameter IDs to {value, origin}. Origin kind is "
                     "user_input, referenced_data (requires reference), assumption, or synthetic. "
@@ -53,9 +80,9 @@ class RunSimulation:
                     "numbers, units, assumptions and limitations; do not treat arithmetic as "
                     "validated policy impact. If status is error, clarify or correct the input "
                     "and do not claim success. Successful definitions are saved per session. "
-                    "Only a sole scenario becomes active automatically. With multiple alternatives "
-                    "the server creates clickable pending selection; explain the results and wait "
-                    "for the user to choose. Never resolve that new question on the user behalf. "
+                    "Only a sole scenario becomes active automatically. Multiple alternatives are saved "
+                    "without pending selection; a comparison can finish without choosing a continuation. "
+                    "Ask for a reference only on an ambiguous follow-up, using clarify_simulation. "
                     "Do not append old comparisons as if they were the active requested scenario. "
                     "Use clarify_simulation for ambiguous additive follow-ups; do not guess their reference. "
                     "Limits: 32 KiB input, 32 parameters, 8 outputs, 8 scenarios."
@@ -76,13 +103,19 @@ class RunSimulation:
         except ConversationError as exc:
             return _error("session_required", str(exc))
         if not isinstance(args, dict):
-            return _error("invalid_input", "Simulation definition must be an object")
+            return _input_error("Simulation definition must be an object")
         try:
             encoded = json.dumps(args, ensure_ascii=False, allow_nan=False).encode("utf-8")
         except (TypeError, ValueError, UnicodeError, RecursionError):
-            return _error("invalid_input", "Simulation definition must contain finite JSON values")
+            return _input_error("Simulation definition must contain finite JSON values")
         if len(encoded) > MAX_INPUT_BYTES:
             return _error("input_limit", "Definition exceeds 32 KiB; reduce its size")
+        # Limit the original envelope before opening it, then apply all existing
+        # collection/schema/engine checks to its contents. Never discard siblings.
+        try:
+            args = _definition_args(args)
+        except (TypeError, ValueError) as exc:
+            return _input_error(str(exc))
         for field, limit in (
             ("parameters", MAX_PARAMETERS),
             ("outputs", MAX_OUTPUTS),
@@ -102,7 +135,7 @@ class RunSimulation:
                 }
                 for issue in exc.errors()[:5]
             ]
-            return _error("invalid_input", "Correct the simulation definition", issues=issues)
+            return _input_error("Correct the simulation definition", issues=issues)
         try:
             result = run_simulation(definition)
         except SimulationError as exc:
@@ -112,7 +145,7 @@ class RunSimulation:
                 "status": "success",
                 "result": result.model_dump(mode="json", by_alias=True),
                 "activeScenarioId": result.scenarios[0].id if len(result.scenarios) == 1 else None,
-                "requiresScenarioSelection": len(result.scenarios) > 1,
+                "requiresScenarioSelection": False,
             },
             ensure_ascii=False,
             allow_nan=False,

@@ -38,17 +38,65 @@ def _origin(origin: ValueOrigin) -> str:
     return text
 
 
+def _signed(value: float) -> str:
+    return ("+" if value > 0 else "") + _number(value)
+
+
 def render_simulation(result: SimulationResult) -> str:
-    """Use the exact engine fields for baseline, alternatives, delta and percent."""
+    """Lead with comparisons; retain formulas and provenance without repeating inputs."""
     definition = result.definition
+    origin_kinds = {value.origin.kind for value in result.baseline.parameters.values()}
+    origin_kinds.update(
+        value.origin.kind for scenario in result.scenarios for value in scenario.parameters.values()
+    )
+    origin_summary = " · ".join(label for kind, label in _ORIGINS.items() if kind in origin_kinds)
     lines = [
-        f"**{_text(definition.title)}**",
+        f"### {_text(definition.title)}",
         "",
         _text(definition.objective),
         "",
-        "Hasil dihitung oleh engine simulasi.",
+        f"Asal input: {origin_summary}.",
         "",
-        "**Rumus**",
+        "Perbandingan terhadap **kondisi awal (baseline)**. Hasil dihitung oleh engine simulasi.",
+        "",
+        "**Kondisi awal:** "
+        + "; ".join(
+            f"{_text(p.label)}: {_number(result.baseline.parameters[p.id].value)} {_text(p.unit)}"
+            for p in definition.parameters
+        )
+        + ".",
+    ]
+    for output in definition.outputs:
+        lines += [
+            "",
+            f"#### {_text(output.label)} ({_text(output.unit)})",
+            "",
+            "| Skenario | Hasil | Selisih | Perubahan |",
+            "|---|---:|---:|---:|",
+            f"| Kondisi awal | **{_number(result.baseline.outputs[output.id])}** | — | — |",
+        ]
+        for scenario in result.scenarios:
+            comparison = scenario.outputs[output.id]
+            percent = (
+                "Tidak terdefinisi (baseline nol)"
+                if comparison.percentage_change is None
+                else _signed(comparison.percentage_change) + "%"
+            )
+            lines.append(
+                f"| {_text(scenario.label)} | **{_number(comparison.scenario_value)}** | {_signed(comparison.delta)} | {percent} |"
+            )
+    lines += ["", "**Asumsi**", ""]
+    lines.extend(f"- {_text(item)}" for item in definition.assumptions)
+    if not definition.assumptions:
+        lines.append("Tidak dicantumkan dalam definisi simulasi.")
+    lines += ["", "**Keterbatasan**", ""]
+    lines.extend(f"- {_text(item)}" for item in definition.limitations)
+    lines.append(
+        "- Hasil mengikuti data dan rumus yang diberikan; bukan bukti dampak kausal kebijakan."
+    )
+    lines += [
+        "",
+        "#### Detail perhitungan dan asal nilai",
         "",
         "| Hasil | Satuan | Rumus |",
         "|---|---|---|",
@@ -69,43 +117,33 @@ def render_simulation(result: SimulationResult) -> str:
         lines.append(
             f"| {_text(parameter.label)} | {_number(value.value)} | {_text(parameter.unit)} | {_origin(value.origin)} |"
         )
-    for scenario in result.scenarios:
+    for scenario in definition.scenarios:
         lines += [
             "",
-            f"**Skenario: {_text(scenario.label)}**",
+            f"**Perubahan input: {_text(scenario.label)}**",
             "",
-            "| Parameter efektif | Nilai | Satuan | Asal nilai |",
+            "| Parameter | Nilai | Satuan | Asal nilai |",
             "|---|---:|---|---|",
         ]
+        changed = False
         for parameter in definition.parameters:
-            value = scenario.parameters[parameter.id]
-            lines.append(
-                f"| {_text(parameter.label)} | {_number(value.value)} | {_text(parameter.unit)} | {_origin(value.origin)} |"
-            )
-        lines += [
-            "",
-            "| Hasil | Satuan | Baseline | Skenario | Selisih | Perubahan terhadap baseline |",
-            "|---|---|---:|---:|---:|---:|",
-        ]
-        for output in definition.outputs:
-            comparison = scenario.outputs[output.id]
-            percent = (
-                "Tidak terdefinisi (baseline nol)"
-                if comparison.percentage_change is None
-                else _number(comparison.percentage_change) + "%"
-            )
-            lines.append(
-                f"| {_text(output.label)} | {_text(output.unit)} | {_number(comparison.baseline_value)} | {_number(comparison.scenario_value)} | {_number(comparison.delta)} | {percent} |"
-            )
-    lines += ["", "**Asumsi**", ""]
-    lines.extend(f"- {_text(item)}" for item in definition.assumptions)
-    if not definition.assumptions:
-        lines.append("Tidak dicantumkan dalam definisi simulasi.")
-    lines += ["", "**Keterbatasan**", ""]
-    lines.extend(f"- {_text(item)}" for item in definition.limitations)
-    lines.append(
-        "- Hasil mengikuti data dan rumus yang diberikan; bukan bukti dampak kausal kebijakan."
-    )
+            if parameter.id in scenario.overrides:
+                value = scenario.overrides[parameter.id]
+                baseline = result.baseline.parameters[parameter.id]
+                # Follow-ups carry all reference inputs. Hide identical carried
+                # values, but retain an explicitly changed origin for traceability.
+                if value.value == baseline.value and value.origin == baseline.origin:
+                    continue
+                changed = True
+                lines.append(
+                    f"| {_text(parameter.label)} | {_number(value.value)} | {_text(parameter.unit)} | {_origin(value.origin)} |"
+                )
+        if not changed:
+            lines.append("| Sama dengan kondisi awal | — | — | Nilai dan asal input tetap |")
+    lines += [
+        "",
+        "Input yang tidak ditampilkan ulang memiliki nilai dan asal yang sama dengan kondisi awal. Asal nilai merupakan deklarasi input, bukan verifikasi sumber otomatis.",
+    ]
     return "\n".join(lines)
 
 

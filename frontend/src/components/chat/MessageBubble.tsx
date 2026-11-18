@@ -1,6 +1,5 @@
 import { memo } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { AssistantContent } from "@/components/chat/AssistantContent";
 import { motion } from "framer-motion";
 import { FileStack, FileText, Volume2, VolumeX } from "lucide-react";
 
@@ -98,7 +97,7 @@ export const MessageBubble = memo(function MessageBubble({
 
       <div
         className={cn(
-          "flex max-w-[min(48rem,85%)] flex-col gap-2",
+          "flex min-w-0 max-w-[min(48rem,85%)] flex-col gap-2",
           isUser ? "items-end" : "items-start",
         )}
       >
@@ -110,25 +109,14 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         )}
 
-        {message.content && (
-          <div
-            className={cn(
-              "rounded-2xl px-4 py-2.5 text-sm",
-              isUser
-                ? "rounded-br-md bg-primary text-primary-foreground"
-                : "rounded-bl-md bg-muted text-foreground",
-            )}
-          >
-            {isUser ? (
+        {(message.content || (!isUser && message.simulationResults?.length)) && (
+          isUser ? (
+            <div className="min-w-0 max-w-full rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground">
               <p className="whitespace-pre-wrap">{message.content}</p>
-            ) : (
-              <div className="prose-chat">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {message.content}
-                </ReactMarkdown>
-              </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <AssistantContent content={message.content} simulationResults={message.simulationResults} />
+          )
         )}
 
         {!isUser && canRead && message.content && (

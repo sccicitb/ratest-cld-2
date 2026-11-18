@@ -12,6 +12,7 @@ from app.simulation.presentation import render_reference_change, render_simulati
 from app.simulation.schemas import (
     ParameterOverride,
     SimulationDefinition,
+    SimulationReport,
     SimulationScenario,
     ValueOrigin,
 )
@@ -39,13 +40,6 @@ def save_result(ctx, result):
         "pending": None,
         "activeScenarioId": result.scenarios[0].id if len(result.scenarios) == 1 else None,
     }
-    if len(result.scenarios) > 1:
-        state["pending"] = _new_pending(
-            state,
-            "Skenario mana yang ingin dijadikan acuan aktif?",
-            _scenario_options(state),
-            kind="select_scenario",
-        )
     session.simulation_state = state
     ctx.db.commit()
 
@@ -100,14 +94,16 @@ def _scenario_options(state):
     ]
 
 
-def request_clarification(ctx, parameter_id: str | None = None, amount: float | None = None):
+def request_clarification(
+    ctx, parameter_id: str | None = None, amount: float | None = None, reference: str | None = None
+):
     session = owned_session(ctx)
     return _request_clarification(
-        ctx, session, deepcopy(session.simulation_state or {}), parameter_id, amount
+        ctx, session, deepcopy(session.simulation_state or {}), parameter_id, amount, reference
     )
 
 
-def _request_clarification(ctx, session, state, parameter_id, amount):
+def _request_clarification(ctx, session, state, parameter_id, amount, reference=None):
     if state.get("pending"):
         raise ConversationError("Masih ada klarifikasi aktif; jawab atau batalkan terlebih dahulu.")
     if not state.get("result"):
@@ -115,11 +111,15 @@ def _request_clarification(ctx, session, state, parameter_id, amount):
             "Belum ada simulasi tersimpan. Tanyakan baseline dan rumus terlebih dahulu."
         )
     if parameter_id is None and amount is None:
+        if reference is not None:
+            raise ConversationError(
+                "Sebutkan parameter dan penambahan sebelum menghitung dari acuan eksplisit."
+            )
         return _publish_pending(
             ctx,
             session,
             state,
-            "Skenario mana yang ingin dijadikan acuan aktif?",
+            "Skenario mana yang ingin kamu lanjutkan?",
             _scenario_options(state),
             kind="select_scenario",
         )
@@ -130,6 +130,21 @@ def _request_clarification(ctx, session, state, parameter_id, amount):
     if parameter is None:
         raise ConversationError("Parameter tidak dikenal; tanyakan parameter yang dimaksud.")
     active = active_scenario(state)
+    if reference is not None:
+        if reference == "baseline":
+            source = state["result"]["baseline"]
+        elif reference == "last_scenario":
+            source = active
+        else:
+            scenario_id = reference.removeprefix("scenario:")
+            source = next(
+                (item for item in state["result"]["scenarios"] if item["id"] == scenario_id), None
+            )
+        if source is None:
+            raise ConversationError(
+                "Acuan belum jelas atau tidak ditemukan; minta user memilih skenario."
+            )
+        return _calculate_change(ctx, session, state, parameter_id, amount, reference, source)
     # Without a selected identity, offer every alternative; none is the default.
     scenarios = [active] if active else state["result"]["scenarios"]
     sources = [("baseline", None, parameter.baseline_value, "baseline")]
@@ -223,17 +238,23 @@ def resolve_clarification(ctx, question_id, reference=None, amount=None, cancel=
         )
         return {"status": "selected", "activeScenarioId": scenario_id}
     increment = pending["amount"] if amount is None else amount
-    target = source["parameters"][pending["parameterId"]]["value"] + increment
+    return _calculate_change(
+        ctx, session, state, pending["parameterId"], increment, reference, source
+    )
+
+
+def _calculate_change(ctx, session, state, parameter_id, increment, reference, source):
+    target = source["parameters"][parameter_id]["value"] + increment
     definition = SimulationDefinition.model_validate(state["result"]["definition"])
     # Carry every input from the identified reference; the baseline stays intact.
     overrides = {
         key: ParameterOverride.model_validate(value) for key, value in source["parameters"].items()
     }
-    overrides[pending["parameterId"]] = ParameterOverride(
+    overrides[parameter_id] = ParameterOverride(
         value=target,
         origin=ValueOrigin(
             kind="user_input",
-            description=f"Klarifikasi: {source['parameters'][pending['parameterId']]['value']:g} + {increment:g}",
+            description=f"Perubahan lanjutan: {source['parameters'][parameter_id]['value']:g} + {increment:g}",
         ),
     )
     definition.scenarios = [
@@ -252,17 +273,15 @@ def resolve_clarification(ctx, question_id, reference=None, amount=None, cancel=
     )
     session.simulation_state = state
     ctx.db.commit()
-    parameter = next(p for p in definition.parameters if p.id == pending["parameterId"])
-    ctx.simulation_reply = (
-        render_reference_change(
-            reference="baseline" if reference == "baseline" else source["label"],
-            parameter=parameter.label,
-            unit=parameter.unit,
-            before=source["parameters"][pending["parameterId"]]["value"],
-            amount=increment,
-            after=target,
-        )
-        + "\n\n"
-        + render_simulation(result)
+    parameter = next(p for p in definition.parameters if p.id == parameter_id)
+    reference_change = render_reference_change(
+        reference="kondisi awal" if reference == "baseline" else source["label"],
+        parameter=parameter.label,
+        unit=parameter.unit,
+        before=source["parameters"][parameter_id]["value"],
+        amount=increment,
+        after=target,
     )
+    ctx.simulation_report = SimulationReport(result=result, reference_change=reference_change)
+    ctx.simulation_reply = reference_change + "\n\n" + render_simulation(result)
     return {"status": "success", "result": state["result"]}

@@ -4,6 +4,7 @@ import asyncio
 import json
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
@@ -227,6 +228,10 @@ def test_route_options_reload_click_and_stale_choice(
     messages = client.get(url + "/messages", headers=auth_headers).json()
     assert "untrusted label" not in messages[-2]["content"]
     assert "15 + 5" in messages[-1]["content"]
+    report = messages[-1]["simulationResults"][0]
+    assert report["result"]["scenarios"][0]["outputs"]["total"]["scenarioValue"] == 100
+    assert "15 + 5" in report["referenceChange"]
+    assert messages[-2]["simulationResults"] is None
     assert client.post(url + "/chat", headers=auth_headers, json=payload).status_code == 409
 
 
@@ -308,8 +313,8 @@ def save_multiple(ctx):
     result = json.loads(asyncio.run(RunSimulation().execute(definition, ctx)))
     assert result["status"] == "success"
     pending = ctx.db.get(ChatSession, ctx.session_id).simulation_state["pending"]
-    assert pending["kind"] == "select_scenario"
-    resolve_clarification(ctx, pending["id"], cancel=True)
+    assert pending is None
+    assert result["requiresScenarioSelection"] is False
     ctx.simulation_reply = None
     return definition
 
@@ -463,7 +468,7 @@ def test_natural_ordinal_uses_actual_option_id(context):
     assert ctx.db.get(ChatSession, ctx.session_id).simulation_state["activeScenarioId"] == "target"
 
 
-def test_multi_result_creates_clickable_selection_and_endpoint_persists_choice(
+def test_multi_result_waits_for_followup_before_clickable_selection(
     client, auth_headers, session_factory, demo_user
 ):
     session_id = client.post("/api/sessions", headers=auth_headers).json()["id"]
@@ -473,10 +478,20 @@ def test_multi_result_creates_clickable_selection_and_endpoint_persists_choice(
             user_id=demo_user["id"], session_id=session_id, db=db, client=None, embedder=None
         )
         response = json.loads(asyncio.run(RunSimulation().execute(definition, ctx)))
-        assert response["requiresScenarioSelection"] is True
+        assert response["requiresScenarioSelection"] is False
+        assert ctx.db.get(ChatSession, session_id).simulation_state["pending"] is None
     url = f"/api/sessions/{session_id}"
     state = client.get(url + "/simulation", headers=auth_headers).json()
     assert state["activeScenarioId"] is None
+    assert state["pending"] is None
+    # Reloading the completed comparison does not generate a question.
+    assert client.get(url + "/simulation", headers=auth_headers).json() == state
+    with session_factory() as db:
+        ctx = ToolContext(
+            user_id=demo_user["id"], session_id=session_id, db=db, client=None, embedder=None
+        )
+        request_clarification(ctx)  # User now asks to choose a continuation.
+    state = client.get(url + "/simulation", headers=auth_headers).json()
     assert state["pending"]["kind"] == "select_scenario"
     assert [o["id"] for o in state["pending"]["options"]] == [
         "scenario:add_two",
@@ -494,6 +509,9 @@ def test_multi_result_creates_clickable_selection_and_endpoint_persists_choice(
     assert state["activeScenarioId"] == "add_two"
     assert state["activeScenarioLabel"] == "Tambah dua armada"
     assert state["pending"] is None
+    assert (
+        client.get(url + "/messages", headers=auth_headers).json()[-1]["simulationResults"] is None
+    )
     assert client.post(url + "/chat", headers=auth_headers, json=body).status_code == 409
     with session_factory() as db:
         ctx = ToolContext(
@@ -506,33 +524,25 @@ def test_multi_result_creates_clickable_selection_and_endpoint_persists_choice(
         assert result["baseline"]["outputs"]["total"] == 50
 
 
-def test_model_cannot_select_new_question_in_same_turn(context):
+def test_model_cannot_select_new_question_in_same_turn(context, monkeypatch):
     ctx, _ = context
-    definition = json.loads(EXAMPLE.read_text())
+    save_multiple(ctx)
+
+    monkeypatch.setattr(
+        "app.simulation.conversation.uuid", SimpleNamespace(uuid4=lambda: "new-question")
+    )
 
     class SelfSelectingModel:
-        calls = 0
-
         async def stream(self, messages, tools):
-            self.calls += 1
-            if self.calls == 1:
-                yield ModelChunk(
-                    type="tool_call", id="run", name="run_simulation", arguments=definition
-                )
-            elif self.calls == 2:
-                state = ctx.db.get(ChatSession, ctx.session_id).simulation_state
-                yield ModelChunk(
-                    type="tool_call",
-                    id="choose",
-                    name="resolve_simulation_clarification",
-                    arguments={
-                        "questionId": state["pending"]["id"],
-                        "reference": "scenario:add_five",
-                    },
-                )
-            else:
-                assert "Wait for the user" in messages[-1]["content"]
-                yield ModelChunk(type="text", text="Silakan pilih acuan melalui tombol.")
+            yield ModelChunk(type="tool_call", id="ask", name="clarify_simulation", arguments={})
+            yield ModelChunk(
+                type="tool_call",
+                id="choose",
+                name="resolve_simulation_clarification",
+                arguments={"questionId": "new-question", "reference": "scenario:target"},
+            )
+
+    registry = build_turn_registry()
 
     async def consume():
         return [
@@ -540,13 +550,14 @@ def test_model_cannot_select_new_question_in_same_turn(context):
             async for e in run_turn(
                 db=ctx.db,
                 session=ctx.db.get(ChatSession, ctx.session_id),
-                message="Bandingkan dua alternatif",
-                registry=build_turn_registry(),
+                message="Saya ingin memilih skenario lanjutan",
+                registry=registry,
                 model=SelfSelectingModel(),
                 ctx=ctx,
             )
         ]
 
+    # Creation ends the turn; model cannot silently answer its own new question.
     events = asyncio.run(consume())
     assert events[-1]["type"] == "done"
     state = ctx.db.get(ChatSession, ctx.session_id).simulation_state
@@ -586,3 +597,144 @@ def test_failed_legacy_reconfirmation_keeps_original_pending(context):
         resolve_clarification(ctx, "old", "last_scenario")
     ctx.db.commit()
     assert room.simulation_state == before
+
+
+@pytest.mark.parametrize(
+    "reference,fleet,capacity,total",
+    [
+        ("baseline", 15, 5, 75),
+        ("scenario:target", 9, 6, 54),
+        ("scenario:comparison", 22, 5, 110),
+    ],
+)
+def test_explicit_reference_calculates_without_question(context, reference, fleet, capacity, total):
+    ctx, factory = context
+    save_multiple(ctx)
+    with factory() as reopened:
+        reloaded_ctx = ToolContext(
+            user_id=ctx.user_id, session_id=ctx.session_id, db=reopened, client=None, embedder=None
+        )
+        response = json.loads(
+            asyncio.run(
+                build_turn_registry().execute(
+                    "clarify_simulation",
+                    {"parameterId": "fleet", "amount": 5, "reference": reference},
+                    reloaded_ctx,
+                )
+            )
+        )
+        assert response["status"] == "success"
+        state = reopened.get(ChatSession, ctx.session_id).simulation_state
+        assert state["pending"] is None
+        assert state["result"]["baseline"]["outputs"]["total"] == 50
+        scenario = state["result"]["scenarios"][0]
+        assert scenario["parameters"]["fleet"]["value"] == fleet
+        assert scenario["parameters"]["capacity"]["value"] == capacity
+        assert scenario["outputs"]["total"]["scenarioValue"] == total
+        assert "Acuan:" in reloaded_ctx.simulation_reply
+
+
+@pytest.mark.parametrize(
+    "reference,amount",
+    [
+        ("scenario:foreign", 5),
+        ("last_scenario", 5),
+        ("baseline", 1000),
+        ("scenario:target", float("inf")),
+    ],
+)
+def test_invalid_explicit_reference_preserves_snapshot(context, reference, amount):
+    ctx, _ = context
+    save_multiple(ctx)
+    before = deepcopy(ctx.db.get(ChatSession, ctx.session_id).simulation_state)
+    with pytest.raises(ValueError):
+        request_clarification(ctx, "fleet", amount, reference)
+    assert ctx.db.get(ChatSession, ctx.session_id).simulation_state == before
+
+
+def test_explicit_reference_chat_turn_uses_server_result(context):
+    ctx, _ = context
+    save_multiple(ctx)
+
+    class ExplicitModel:
+        async def stream(self, messages, tools):
+            yield ModelChunk(
+                type="tool_call",
+                id="explicit",
+                name="clarify_simulation",
+                arguments={"parameterId": "fleet", "amount": 5, "reference": "scenario:target"},
+            )
+
+    async def consume():
+        return [
+            e
+            async for e in run_turn(
+                db=ctx.db,
+                session=ctx.db.get(ChatSession, ctx.session_id),
+                message="Lanjutkan target 4 armada, tambah 5 armada",
+                registry=build_turn_registry(),
+                model=ExplicitModel(),
+                ctx=ctx,
+            )
+        ]
+
+    events = asyncio.run(consume())
+    saved = ctx.db.get(Message, events[-1]["messageId"]).content
+    assert "4 + 5 = **9 armada**" in saved
+    assert "| **54** | +4 | +8% |" in saved
+    assert "belum berhasil" not in saved
+    assert ctx.db.get(ChatSession, ctx.session_id).simulation_state["pending"] is None
+
+
+def test_historical_cards_keep_their_own_results_after_followup(
+    client, auth_headers, session_factory, demo_user
+):
+    session_id = client.post("/api/sessions", headers=auth_headers).json()["id"]
+    definition = json.loads(EXAMPLE.read_text())
+
+    class Model:
+        def __init__(self, arguments):
+            self.arguments = arguments
+            self.called = False
+
+        async def stream(self, messages, tools):
+            if not self.called:
+                self.called = True
+                yield ModelChunk(type="tool_call", id="calculate", **self.arguments)
+
+    async def turn(tool_name, arguments):
+        with session_factory() as db:
+            ctx = ToolContext(
+                user_id=demo_user["id"], session_id=session_id, db=db, client=None, embedder=None
+            )
+            return [
+                e
+                async for e in run_turn(
+                    db=db,
+                    session=db.get(ChatSession, session_id),
+                    message="Uji hasil per pesan",
+                    registry=build_turn_registry(),
+                    model=Model({"name": tool_name, "arguments": arguments}),
+                    ctx=ctx,
+                )
+            ]
+
+    initial = asyncio.run(turn("run_simulation", definition))
+    followup = asyncio.run(
+        turn(
+            "clarify_simulation",
+            {"parameterId": "fleet", "amount": 5, "reference": "scenario:add_two"},
+        )
+    )
+    messages = client.get(f"/api/sessions/{session_id}/messages", headers=auth_headers).json()
+    reports = [m["simulationResults"] for m in messages if m["role"] == "assistant"]
+    assert reports[0] == initial[-2]["reports"]
+    assert reports[1] == followup[-2]["reports"]
+    assert [
+        s["outputs"]["total"]["scenarioValue"] for s in reports[0][0]["result"]["scenarios"]
+    ] == [60, 75]
+    assert reports[1][0]["result"]["scenarios"][0]["outputs"]["total"]["scenarioValue"] == 85
+    # Refresh once more: no lookup against the last session snapshot changes history.
+    assert (
+        client.get(f"/api/sessions/{session_id}/messages", headers=auth_headers).json() == messages
+    )

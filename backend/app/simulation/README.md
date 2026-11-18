@@ -104,10 +104,13 @@ mengganti snapshot terakhir; riwayat hasil tetap berupa pesan, belum arsip versi
 terstruktur lengkap. Baseline asli dipertahankan pada penambahan lanjutan. Semua
 parameter lain mengikuti acuan yang dipilih. Jika ada beberapa alternatif dalam
 snapshot, acuan lanjutan memakai `activeScenarioId`, bukan posisi daftar.
-Hasil tunggal otomatis aktif; hasil dengan beberapa alternatif membuat pending
-`select_scenario` dan tombol pilihan. Memilihnya hanya menyimpan ID; baseline,
-rumus dan hasil tidak dihitung ulang. Pemilihan dapat dijawab lewat chat dengan
-`resolve_simulation_clarification` menggunakan ID opsi yang sedang ditampilkan.
+Hasil tunggal otomatis aktif; hasil dengan beberapa alternatif selesai tanpa
+pending atau permintaan memilih acuan. Saat user meminta kelanjutan yang ambigu,
+`clarify_simulation(parameterId, amount)` membuat pilihan baseline dan skenario.
+Jika user secara khusus meminta memilih skenario untuk dilanjutkan, pemanggilan
+tanpa argumen membuat `select_scenario`. Memilihnya hanya menyimpan ID; baseline,
+rumus dan hasil tidak dihitung ulang. Jawaban natural memakai
+`resolve_simulation_clarification` dengan ID opsi yang sedang ditampilkan.
 Ordinal seperti “yang kedua” harus mengikuti urutan opsi pending, bukan alias tetap.
 Sebelum user menjawab pada turn berikutnya, model tidak boleh menyelesaikan
 klarifikasi yang baru dibuat sendiri.
@@ -120,19 +123,21 @@ kemudian kedaluwarsa. Opsi baru menyimpan `scenarioId`, sehingga mengubah urutan
 hasil tidak mengubah acuan. Alias wire `last_scenario` dipertahankan untuk opsi
 acuan aktif, tetapi tidak lagi berarti elemen terakhir.
 
-`clarify_simulation` tanpa argumen dapat dipakai untuk meminta pilihan acuan dari
-snapshot yang sudah ada (misalnya state lama atau mengganti acuan). Pemanggilan
-dengan `parameterId` dan `amount` tetap meminta klarifikasi penambahan. Jika
-belum ada ID aktif, pilihan penambahan menyertakan baseline dan semua alternatif;
-sistem tidak memilih salah satunya secara otomatis. Tidak ada tool/engine baru.
+`clarify_simulation` dengan `parameterId`, `amount` dan `reference` memproses
+penambahan dari acuan eksplisit tanpa konfirmasi ulang. Acuan memakai `baseline`,
+`last_scenario` (hanya jika identitas aktif jelas), atau `scenario:<ID tersimpan>`.
+Jalur langsung dan penyelesaian pilihan berbagi `_calculate_change`; tidak ada
+engine kedua. Batas nilai dan error perhitungan tetap diperiksa sebelum menyimpan.
+Tanpa reference, pilihan penambahan menyertakan baseline dan skenario aktif atau
+semua alternatif jika belum ada ID aktif. Pending dari sesi lama tetap bisa dijawab
+atau dibatalkan; tidak dihapus diam-diam ketika reload.
 
 Uji manual regresi identitas:
 1. Minta dua alternatif sintetis: target 4 armada berkapasitas 6 ton/hari/armada,
    dan pembanding 17 armada berkapasitas 5. Baseline tetap 10 × 5 = 50.
-2. Setelah hasil muncul, pilih **Target 4 armada** pada tombol acuan (atau sebutkan
-   nama/nomor opsi lewat chat). UI menampilkan label acuan aktif.
-3. Reload, lalu kirim “sekarang coba tambah lima”. Pilihan acuan target harus
-   menampilkan 4 + 5 → 9; pembanding 17 bukan default tersembunyi.
+2. Setelah hasil muncul, pastikan tidak ada pertanyaan atau label acuan aktif.
+3. Reload, lalu kirim “sekarang coba tambah lima”. Pilihan baseline, target, dan
+   pembanding muncul; target menampilkan 4 + 5 → 9. Pembanding 17 bukan default.
 4. Pilih acuan target tersebut: hasil 9 × 6 = **54 ton/hari**, baseline **50**,
    selisih **4**, perubahan **8%**. Parameter kapasitas tetap mengikuti target.
 5. Klik ulang pilihan yang sudah dipakai ditolak. Memilih opsi pada chat berbeda
@@ -154,6 +159,41 @@ masih bergantung pada LLM; validasi bukan jaminan semua kalimat dipahami. State
 mengikuti batas konkurensi registry turn aplikasi saat ini (satu proses); belum
 menggunakan penguncian lintas worker. Belum ada panel parameter/grafik khusus
 atau verifikasi otomatis data OPD dan asumsi kausal.
+
+## Kontrak input tool dan pembungkus kompatibilitas
+
+Schema yang ditawarkan ke model tetap satu `SimulationDefinition` pada tingkat
+teratas: `title`, `objective`, `parameters`, `outputs`, dan `scenarios`. Daftar
+parameter/output/skenario harus berupa array objek; angka harus finite dan bertipe
+angka sesuai validator yang sudah ada. Tidak ada perubahan kontrak engine/CLI.
+
+Adapter `RunSimulation.execute` juga menerima dua bentuk kompatibilitas runtime:
+`{"definition": <objek definisi lengkap>}` atau
+`{"arguments": <objek definisi lengkap>}`. Pembungkus hanya boleh satu tingkat dan
+menjadi satu-satunya field teratas. Setelah dibuka, isinya masuk ke validator,
+pengecekan jumlah koleksi, engine, penyimpanan dan penyaji hasil yang sama.
+Input asli tidak dimutasi. Schema untuk model tetap mengarahkan penggunaan bentuk
+langsung agar tidak menambah pilihan kontrak yang harus dipelajari model.
+
+Contoh yang ditolak: pembungkus ditambah `scope`/field lain, pembungkus bertingkat,
+kedua pembungkus sekaligus, isi pembungkus berupa string JSON atau array, serta
+pembungkus lain seperti `payload`. Field `userId`, `sessionId` atau field tak
+terdaftar di dalam definisi juga tetap ditolak. Tidak ada penggabungan field,
+parsing string JSON di dalam field, konversi string menjadi angka, pengisian nilai
+kosong, atau perbaikan rumus otomatis.
+
+Batas 32 KiB dihitung pada JSON UTF-8 asli, termasuk pembungkus, sebelum isinya
+dibuka. Batas parameter/output/skenario dan hasil tetap berlaku. Validasi sesi
+serta penolakan perubahan saat klarifikasi pending tetap dijalankan terlebih dahulu.
+Error `invalid_input` menyertakan `hint` bentuk field yang diharapkan, serta detail
+`issues` dari validator bila tersedia, tanpa menambahkan echo input mentah.
+
+Uji melalui chat biasa tidak dapat memaksa bentuk JSON tertentu dari LLM.
+Regresi otomatis `test_simulation_tool.py` dan `test_chat_simulation.py` mengirim
+kedua bentuk secara langsung dan menguji retry dari field array yang salah ke
+pembungkus berisi definisi valid. Hasil, baseline, asal nilai, acuan, serta tampilan
+harus sama dengan bentuk langsung. Ini membuktikan kompatibilitas adapter, bukan
+jaminan semua variasi keluaran model atau pertanyaan natural akan diterima.
 
 ## Status perhitungan dan kegagalan tool
 
@@ -207,8 +247,13 @@ yang tidak valid. Suite juga memeriksa token/reasoning SSE dan pesan tersimpan.
 `simulation/presentation.py::render_simulation` adalah satu penyaji Markdown untuk
 simulasi awal dan hasil setelah klarifikasi. Ia menerima `SimulationResult` yang
 sudah dihitung; tidak menghitung ulang delta, persentase, atau perbandingan lain.
-Jawaban memuat judul/tujuan, rumus dan satuan, parameter baseline serta asal nilai,
-parameter efektif setiap alternatif, seluruh output, asumsi dan keterbatasan.
+Jawaban diawali judul/tujuan, kategori asal input, ringkasan baseline dan satu tabel
+per output yang memuat semua alternatif. Nilai output, selisih dan persentase
+langsung memakai field engine; tanda + hanya format tampilan. Asumsi dan batasan
+mendahului detail rumus, parameter baseline dan asal nilai. Detail alternatif
+hanya memuat input dengan nilai atau asal yang berbeda dari baseline. Input
+warisan yang identik tidak ditampilkan ulang; perubahan asal dengan angka sama
+tetap ditampilkan agar jejak sumber tidak hilang.
 Persentase `null` ditulis tidak terdefinisi karena baseline nol. Angka float
 mengikuti representasi Python tanpa pembulatan tersembunyi ke enam digit; nol
 bertanda ditampilkan sebagai 0. Ini bukan perubahan presisi engine.
@@ -229,15 +274,20 @@ teksnya di-escape agar tidak membentuk HTML atau baris tabel tambahan.
 
 Uji manual:
 1. Jalankan contoh armada 10 × 5 dengan alternatif 12 dan 15 armada. Pastikan kedua
-   tabel menampilkan 50 → 60 (+10; 20%) dan 50 → 75 (+25; 50%). Rumus, satuan,
+   baris perbandingan menampilkan 50 → 60 (+10; +20%) dan 50 → 75 (+25; +50%). Rumus, satuan,
    parameter serta asumsi harus muncul tanpa perbandingan tambahan buatan model.
-2. Pilih acuan, lanjutkan penambahan, lalu reload. Tabel hasil lanjutan memakai
-   format yang sama dan tetap tersedia pada riwayat pesan.
+2. Kirim “tambah lima”; pilih acuan lewat tombol atau chat, lalu reload. Tabel hasil
+   lanjutan memakai format yang sama dan tetap tersedia pada riwayat pesan.
+   Pada sesi baru dengan perbandingan awal yang sama, kirim “lanjutkan skenario
+   tambah dua, tambah lima armada dari skenario itu”: langsung 17 × 5 = 85 tanpa
+   pertanyaan acuan ulang.
 3. Uji baseline 0 dengan rumus valid dan skenario nonnol. Persentase ditampilkan
    sebagai tidak terdefinisi, bukan 0%.
 
 Chat konseptual yang tidak memanggil tool perhitungan tetap memakai jawaban model.
-Jawaban historis tidak ditulis ulang; tidak ada perubahan schema DB atau frontend.
+Jawaban historis tidak ditulis ulang; tidak ada perubahan schema DB. Frontend
+memakai `ChatMarkdown` bersama untuk streaming/riwayat, tabel bergulir horizontal
+pada ruang sempit, dan tidak menampilkan label acuan aktif permanen.
 
 ## Mencoba manual
 
@@ -346,3 +396,87 @@ DATABASE_URL=sqlite:///:memory: MODEL_BASE_URL=http://127.0.0.1:9/v1 \
 
 Fixture HTTP menguji auth, ownership, pilihan kedaluwarsa, SSE, dan penyimpanan
 pesan dengan DB in-memory. Migrasi tetap perlu diverifikasi terpisah pada DB uji.
+
+## Pilot penerimaan sintetis
+
+[Panduan pilot persampahan](../../../docs/pilots/persampahan.md) menetapkan tujuan,
+satuan, batas model dan prosedur UAT. Kumpulan percakapan memakai fixture armada
+yang sudah ada; runner `scripts/evaluate_policy_pilot.py` memanggil loop/tool asli
+pada DB in-memory. Tanpa `--live`, runner tidak menghubungi model.
+
+[Hasil evaluasi pertama](../../../docs/pilots/persampahan-results.md) memisahkan
+pemeriksaan angka/state dari review transcript. Semua kondisi mekanis lolos pada
+satu eksekusi 10 kasus, tetapi pilot belum lulus: nilai absolut -2 ditafsirkan
+sebagai pengurangan 2, dan asumsi eksplisit tidak selalu tersimpan lengkap. Review
+OPD serta UAT browser tetap diperlukan; hasil sintetis bukan validasi model kota.
+
+
+## Kartu visual dan grafik dalam chat
+
+Hasil baru menyertakan `simulationResults` pada pesan assistant, berupa daftar
+`SimulationReport`: satu `SimulationResult` tervalidasi serta `referenceChange`
+opsional untuk perhitungan lanjutan. Kolom JSON nullable `messages.simulation_results`
+ditambahkan oleh migration `e91a4f7c62b0`. Startup backend menjalankan migration
+tertunda. Tidak ada backfill: pesan lama tetap Markdown; hasilnya tidak direka ulang
+dari snapshot sesi yang sudah berubah.
+
+Alur data: engine → status per-turn / hasil resolusi klik → payload pesan → commit
+DB → event SSE `simulation_result` → `AssistantContent` → `SimulationResultCard`.
+Endpoint messages mengembalikan payload yang sama saat reload. `SimulationStatus`
+memilih hasil sukses pada round terakhir; kegagalan tidak mendapat grafik. Pertanyaan,
+pemilihan acuan dan pembatalan tanpa perhitungan juga tidak mendapat payload visual.
+Beberapa perhitungan sukses dalam round yang sama menghasilkan beberapa kartu.
+
+`ToolContext.simulation_report` membawa hasil engine untuk jalur kelanjutan eksplisit
+atau klik tanpa membaca ulang snapshot. Nilainya direset pada awal turn.
+`schema_base.py` memuat `CamelModel` yang sama dengan sebelumnya; ia tetap diekspor
+melalui `app.schemas`, dan digunakan kontrak simulasi tanpa circular import DTO pesan.
+
+Frontend memakai satu `AssistantContent` untuk stream dan riwayat. Zod memeriksa
+bentuk payload, finite numbers, ketersediaan input/output dan konsistensi baseline.
+Jika payload kosong atau tidak didukung, teks Markdown tetap tersedia. Tidak ada
+pembacaan angka dari Markdown, penghitungan delta/persentase baru, HTML buatan
+model, atau dependency grafik tambahan.
+
+Kartu menampilkan label asal input, pilihan indikator, angka per skenario, grafik
+batang SVG / tabel, asumsi, keterbatasan, dan detail perhitungan yang dapat dibuka.
+Perbandingan memakai baseline; panjang batang memakai skala bersama yang mencakup
+nol dan nilai negatif. Normalisasi skala mencegah overflow geometri untuk float
+finite yang sangat besar. Angka tetap mengikuti representasi JavaScript tanpa
+pembulatan tambahan; pemisah ribuan/desimal biasa ditampilkan dalam format Indonesia.
+Persentase null tidak diganti 0%. Warna bukan penilaian baik/buruk suatu kebijakan.
+
+Uji manual setelah restart backend dan refresh frontend:
+
+1. Buat simulasi baru 10 × 5 dengan alternatif 12 dan 15 armada. Kartu harus
+   menampilkan 50/60/75 ton/hari, selisih +10/+25, perubahan +20%/+50%.
+2. Ganti Grafik ke Tabel; angka harus sama. Buka detail untuk rumus dan asal nilai.
+3. Minta dua output dengan satuan berbeda; pilih indikator. Grafik, kartu angka
+   dan tabel harus serentak mengikuti output yang dipilih, tanpa mencampur satuan.
+4. Kirim kelanjutan ambigu, pilih skenario 12 armada lalu tambah 5: hasil baru 85.
+   Reload dan buka pesan awal: grafik awal harus tetap 50/60/75.
+5. Uji kondisi awal nol dengan rumus valid; persentase tetap tidak terdefinisi.
+   Uji output negatif dengan rumus yang sesuai; batang harus mengarah dari nol
+   ke sisi negatif. Coba juga seluruh nilai nol.
+6. Pada layar sempit, kartu menumpuk dan tabel dapat digulir. Gunakan Tab/Enter
+   untuk tombol dan detail. Pertanyaan klarifikasi, pembatalan serta perhitungan
+   gagal harus tetap terbaca dan tidak mengklaim hasil baru dengan grafik.
+
+Verifikasi otomatis frontend tanpa dependency tes baru (Node >=22.22):
+
+```bash
+cd frontend
+node --test tests/simulation.test.mjs
+npm run typecheck
+npm run build
+```
+
+Tambahkan `tests/test_simulation_message_migration.py` pada suite backend.
+Tes migration membuat database sementara dari revisi sebelum kartu visual,
+memastikan pesan lama tetap utuh dan payload nullable, kemudian menguji downgrade
+hanya pada database sementara itu. Tes chat/HTTP mencocokkan SSE, pesan tersimpan,
+hasil klik, kegagalan dan histori setelah simulasi lanjutan.
+
+Preview komponen di Chrome telah memeriksa Grafik/Tabel, pilihan indikator, detail,
+lebar kartu 320 piksel, kondisi awal nol dan batang negatif/positif. Preview memakai
+fixture sintetis terisolasi, bukan login atau UAT end-to-end pada database Citya.

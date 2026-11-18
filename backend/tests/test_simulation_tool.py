@@ -100,12 +100,13 @@ def test_collection_limits(definition, collection, maximum):
     assert call(definition)["code"] == "input_limit"
 
 
-def test_result_limit_returns_error_without_truncating_json(definition):
+@pytest.mark.parametrize("wrapper", [None, "definition", "arguments"])
+def test_result_limit_returns_error_without_truncating_json(definition, wrapper):
     definition["parameters"][1]["origin"]["description"] = "x" * 16000
     scenario = definition["scenarios"][0]
     definition["scenarios"] = [dict(deepcopy(scenario), id=f"scenario_{i}") for i in range(8)]
     assert len(json.dumps(definition).encode()) < MAX_INPUT_BYTES
-    response = call(definition)
+    response = call({wrapper: definition} if wrapper else definition)
     assert response["code"] == "result_limit"
     assert "result" not in response
 
@@ -145,3 +146,103 @@ def test_schema_is_complete_and_resolvable_and_has_no_scope_arguments():
     assert "userId" not in parameters["properties"]
     assert "sessionId" not in parameters["properties"]
     assert parameters["properties"]["scenarios"]["maxItems"] == 8
+
+
+@pytest.mark.parametrize("wrapper", ["definition", "arguments"])
+def test_supported_envelope_matches_standard_results_without_mutation(definition, wrapper):
+    original = deepcopy(definition)
+    wrapped = {wrapper: definition}
+    assert call(wrapped) == call(original)
+    assert wrapped == {wrapper: original}
+
+
+@pytest.mark.parametrize("outer", ["definition", "arguments"])
+@pytest.mark.parametrize("inner", ["definition", "arguments"])
+def test_nested_envelopes_are_rejected(definition, outer, inner):
+    response = call({outer: {inner: definition}})
+    assert response["code"] == "invalid_input"
+    assert "Nested" in response["message"]
+
+
+@pytest.mark.parametrize("wrapper", ["definition", "arguments"])
+@pytest.mark.parametrize("extra", ["title", "scope", "userId", "sessionId", "unknown"])
+def test_envelope_siblings_are_never_silently_dropped(definition, wrapper, extra):
+    response = call({wrapper: definition, extra: "DO_NOT_ECHO"})
+    assert response["code"] == "invalid_input"
+    assert "only top-level field" in response["message"]
+    assert "DO_NOT_ECHO" not in json.dumps(response)
+
+
+def test_both_envelopes_are_ambiguous_even_if_identical(definition):
+    assert call({"definition": definition, "arguments": definition})["code"] == "invalid_input"
+
+
+@pytest.mark.parametrize("value", [None, [], "encoded definition", 20, True])
+@pytest.mark.parametrize("wrapper", ["definition", "arguments"])
+def test_envelope_contents_must_be_an_object(wrapper, value):
+    assert call({wrapper: value})["code"] == "invalid_input"
+
+
+@pytest.mark.parametrize("wrapper", ["definition", "arguments"])
+@pytest.mark.parametrize("field", ["scope", "userId", "sessionId"])
+def test_scoping_fields_inside_envelope_are_still_rejected(definition, wrapper, field):
+    definition[field] = "other-user"
+    assert call({wrapper: definition})["code"] == "invalid_input"
+
+
+@pytest.mark.parametrize("wrapper", ["definition", "arguments"])
+@pytest.mark.parametrize("value", ["20", True, None])
+def test_values_are_not_coerced(definition, wrapper, value):
+    definition["parameters"][0]["baselineValue"] = value
+    response = call({wrapper: definition})
+    assert response["code"] == "invalid_input"
+    assert response["issues"][0]["field"] == "parameters.0.baselineValue"
+    assert "finite numbers, not strings" in response["hint"]
+
+
+@pytest.mark.parametrize("wrapper", ["definition", "arguments"])
+def test_arrays_are_not_repaired_or_decoded(definition, wrapper):
+    definition["scenarios"] = json.dumps(definition["scenarios"])
+    response = call({wrapper: definition})
+    assert response["code"] == "invalid_input"
+    assert response["issues"][0]["field"] == "scenarios"
+    assert response["issues"][0]["type"] == "list_type"
+    assert "arrays of objects" in response["hint"]
+
+
+@pytest.mark.parametrize("wrapper", ["definition", "arguments"])
+def test_envelope_bytes_count_toward_original_payload_limit(definition, wrapper):
+    # ASCII lets the measured encoded size equal the UTF-8 byte count precisely.
+    definition["title"] = "x"
+    base_size = len(json.dumps(definition, ensure_ascii=False).encode())
+    definition["title"] += "x" * (MAX_INPUT_BYTES - base_size)
+    assert len(json.dumps(definition, ensure_ascii=False).encode()) == MAX_INPUT_BYTES
+    assert call(definition)["status"] == "success"
+    assert call({wrapper: definition})["code"] == "input_limit"
+
+
+@pytest.mark.parametrize("wrapper", ["definition", "arguments"])
+@pytest.mark.parametrize("field,limit", [("parameters", 32), ("outputs", 8), ("scenarios", 8)])
+def test_envelope_collections_keep_existing_limits(definition, wrapper, field, limit):
+    prototype = definition[field][0]
+    definition[field] = [dict(deepcopy(prototype), id=f"item_{i}") for i in range(limit + 1)]
+    assert call({wrapper: definition})["code"] == "input_limit"
+
+
+@pytest.mark.parametrize("wrapper", ["definition", "arguments"])
+@pytest.mark.parametrize(
+    "expression,code", [("fleet / 0", "division_by_zero"), ("fleet ** 2", "unsupported_expression")]
+)
+def test_envelope_keeps_engine_restrictions(definition, wrapper, expression, code):
+    definition["outputs"][0]["expression"] = expression
+    assert call({wrapper: definition})["code"] == code
+
+
+@pytest.mark.parametrize("wrapper", ["definition", "arguments"])
+def test_unknown_envelope_is_not_accepted(definition, wrapper):
+    assert call({"payload": {wrapper: definition}})["code"] == "invalid_input"
+
+
+@pytest.mark.parametrize("wrapper", ["definition", "arguments"])
+def test_envelope_preserves_authentication_requirement(definition, wrapper):
+    assert call({wrapper: definition}, session_id=None)["code"] == "session_required"

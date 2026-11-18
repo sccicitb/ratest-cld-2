@@ -6,27 +6,13 @@ the frontend expects (§2). FastAPI emits response models by alias by default.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_serializer, model_validator
-from pydantic.alias_generators import to_camel
+from pydantic import model_validator
 
-
-class CamelModel(BaseModel):
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        from_attributes=True,
-    )
-
-    @field_serializer("*", when_used="json", check_fields=False)
-    def _utc_datetimes(self, v):  # noqa: ANN001
-        if isinstance(v, datetime):
-            if v.tzinfo is None:
-                v = v.replace(tzinfo=timezone.utc)
-            return v.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-        return v
+from app.schema_base import CamelModel
+from app.simulation.schemas import SimulationReport
 
 
 # --- Auth (§4) ---
@@ -86,6 +72,7 @@ class MessageOut(CamelModel):
     role: str
     content: str
     attachments: list[AttachmentOut] = []
+    simulation_results: list[SimulationReport] | None = None
     created_at: datetime
 
 

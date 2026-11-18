@@ -4,6 +4,7 @@ Every event the chat loop yields goes through one of these so the camelCase
 keys (`toolName`, `toolArgs`, `messageId`) and optional-field omission stay
 correct in one place rather than scattered across the loop.
 """
+
 from __future__ import annotations
 
 
@@ -49,3 +50,8 @@ def artifact(artifactId: str, version: int, title: str) -> dict:  # noqa: N803 -
         "version": version,
         "title": title,
     }
+
+
+def simulation_result(reports: list[dict]) -> dict:
+    """Published once, after the owning assistant message has been committed."""
+    return {"type": "simulation_result", "reports": reports}

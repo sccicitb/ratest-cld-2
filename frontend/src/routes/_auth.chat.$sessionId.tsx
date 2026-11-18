@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { AssistantContent } from "@/components/chat/AssistantContent";
 import { Database, FileCode, Loader2 } from "lucide-react";
 
 import { MessageBubble } from "@/components/chat/MessageBubble";
@@ -33,6 +32,7 @@ export default function ChatRoute() {
     isStreaming,
     steps,
     streamedContent,
+    streamedSimulationResults,
     streamedReasoning,
     currentArtifact,
     error,
@@ -195,9 +195,6 @@ export default function ChatRoute() {
             <MessageBubble key={message.id} message={message} />
           ))}
 
-          {simulation?.activeScenarioLabel && (
-            <p className="text-sm text-muted-foreground">Acuan aktif: {simulation.activeScenarioLabel}</p>
-          )}
           {simulation?.pending && (
             <section aria-label="Klarifikasi simulasi" className="rounded-xl border border-border bg-muted/50 p-4 text-sm">
               <p className="mb-3 font-medium">{simulation.pending.question}</p>
@@ -259,17 +256,13 @@ export default function ChatRoute() {
             <ThoughtsPanel reasoning={streamedReasoning} active={thinkingActive} />
           )}
 
-          {isStreaming && streamedContent && (
+          {isStreaming && (streamedContent || streamedSimulationResults) && (
             <div className="flex w-full gap-3">
               <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-brand-red text-xs font-medium text-white">
                 AI
               </div>
-              <div className="max-w-[min(48rem,85%)] rounded-2xl rounded-bl-md bg-muted px-4 py-2.5 text-sm">
-                <div className="prose-chat">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {streamedContent}
-                  </ReactMarkdown>
-                </div>
+              <div className="min-w-0 max-w-[min(48rem,85%)]">
+                <AssistantContent content={streamedContent} simulationResults={streamedSimulationResults} />
                 <Loader2 className="mt-1 size-3.5 animate-spin text-muted-foreground" />
               </div>
             </div>
