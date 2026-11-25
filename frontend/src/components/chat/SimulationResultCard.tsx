@@ -6,6 +6,7 @@ import {
   comparisonRows,
   formatSimulationNumber as number,
   signedSimulationNumber as signed,
+  simulationInsights,
   ORIGIN_LABELS,
 } from "@/lib/simulation";
 import type { SimulationReport } from "@/lib/simulation";
@@ -20,6 +21,7 @@ export function SimulationResultCard({ report }: { report: SimulationReport }) {
     definition.outputs.find((item) => item.id === outputId) ??
     definition.outputs[0];
   const rows = comparisonRows(report, output.id);
+  const insights = simulationInsights(report, output, rows);
   const kinds = new Set([
     ...Object.values(baseline.parameters).map((p) => p.origin.kind),
     ...scenarios.flatMap((s) =>
@@ -167,6 +169,20 @@ export function SimulationResultCard({ report }: { report: SimulationReport }) {
             </table>
           </div>
         )}
+
+        <section className="simulation-insights" aria-labelledby={`${id}-insights`}>
+          <h4 id={`${id}-insights`}>Insight simulasi</h4>
+          <dl>
+            <div>
+              <dt>Temuan perbandingan</dt>
+              <dd>{insights.comparison}</dd>
+            </div>
+            <div>
+              <dt>Yang perlu diperiksa</dt>
+              <dd>{insights.consideration}</dd>
+            </div>
+          </dl>
+        </section>
 
         <div className="simulation-context-grid">
           <section className="simulation-context">

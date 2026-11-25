@@ -80,6 +80,9 @@ export const simulationReportSchema = z
   });
 
 export type SimulationReport = z.infer<typeof simulationReportSchema>;
+type SimulationOutput =
+  SimulationReport["result"]["definition"]["outputs"][number];
+type ScenarioParameters = SimulationReport["result"]["baseline"]["parameters"];
 export interface ComparisonRow {
   id: string;
   label: string;
@@ -149,3 +152,107 @@ export const ORIGIN_LABELS = {
   assumption: "Asumsi",
   referenced_data: "Data bersumber",
 };
+
+function describeInputDifference(
+  definition: SimulationReport["result"]["definition"],
+  from: ScenarioParameters,
+  to: ScenarioParameters,
+): string {
+  const changed = definition.parameters.filter(
+    ({ id }) => from[id].value !== to[id].value,
+  );
+  if (changed.length === 0) return "";
+
+  if (changed.length === 1) {
+    const { id, label, unit } = changed[0];
+    const before = formatSimulationNumber(from[id].value);
+    const after = formatSimulationNumber(to[id].value);
+    return ` ${label} berubah dari ${before} menjadi ${after} ${unit}. Input lain tetap sama.`;
+  }
+
+  const labels = changed.slice(0, 2).map(({ label }) => label);
+  if (changed.length > 2)
+    labels.push(`${changed.length - 2} parameter lainnya`);
+  const inputs = new Intl.ListFormat("id", { type: "conjunction" }).format(
+    labels,
+  );
+  return ` Perbandingan ini melibatkan ${changed.length} perubahan input (${inputs}) sekaligus.`;
+}
+
+/** Describe only the selected indicator and the alternatives represented in the card. */
+export function simulationInsights(
+  report: SimulationReport,
+  output: SimulationOutput,
+  rows: ComparisonRow[],
+) {
+  const { definition, baseline, scenarios } = report.result;
+  const [initial, ...alternatives] = rows;
+  const amount = (value: number) =>
+    `${formatSimulationNumber(value)} ${output.unit}`;
+  const values = alternatives.map(({ value }) => value);
+  const lowest = Math.min(...values);
+  const highest = Math.max(...values);
+  let comparison: string;
+
+  if (alternatives.length === 1) {
+    const [scenario] = alternatives;
+    const label = `“${scenario.label}”`;
+    if (scenario.value === initial.value) {
+      comparison = `Skenario ${label} menghasilkan nilai yang sama dengan kondisi awal, yaitu ${amount(scenario.value)}.`;
+    } else {
+      const direction =
+        scenario.value > initial.value ? "lebih tinggi" : "lebih rendah";
+      comparison = `Skenario ${label} menghasilkan ${amount(scenario.value)}, ${amount(Math.abs(scenarios[0].outputs[output.id].delta))} ${direction} dari kondisi awal.`;
+    }
+    comparison += describeInputDifference(
+      definition,
+      baseline.parameters,
+      scenarios[0].parameters,
+    );
+  } else if (lowest === highest) {
+    comparison = `Seluruh ${alternatives.length} skenario menghasilkan nilai yang sama untuk indikator ini, yaitu ${amount(lowest)}.`;
+  } else {
+    const lowRows = alternatives.filter(({ value }) => value === lowest);
+    const highRows = alternatives.filter(({ value }) => value === highest);
+    const gap = highest - lowest;
+
+    if (lowRows.length === 1 && highRows.length === 1 && Number.isFinite(gap)) {
+      const [low] = lowRows;
+      const [high] = highRows;
+      // Avoid surfacing floating-point subtraction noise in the summary.
+      const rounded = Number(gap.toPrecision(12));
+      const gapLabel =
+        Number.isFinite(rounded) && rounded !== gap
+          ? `sekitar ${amount(rounded)}`
+          : amount(gap);
+      comparison = `Di antara alternatif yang diuji, hasil skenario “${high.label}” lebih tinggi ${gapLabel} daripada “${low.label}”.`;
+      const lowInputs = scenarios.find(({ id }) => id === low.id)?.parameters;
+      const highInputs = scenarios.find(({ id }) => id === high.id)?.parameters;
+      if (lowInputs && highInputs) {
+        comparison += describeInputDifference(
+          definition,
+          lowInputs,
+          highInputs,
+        );
+      }
+    } else {
+      const describeExtreme = (matches: ComparisonRow[]) =>
+        matches.length === 1
+          ? `skenario “${matches[0].label}”`
+          : `${matches.length} skenario`;
+      comparison = `Nilai terendah adalah ${amount(lowest)} pada ${describeExtreme(lowRows)}. Nilai tertinggi adalah ${amount(highest)} pada ${describeExtreme(highRows)}.`;
+    }
+  }
+
+  const limitation = definition.limitations.find((text) => text.trim())?.trim();
+  const assumption = definition.assumptions.find((text) => text.trim())?.trim();
+  let consideration =
+    "Tetapkan target dan batas yang relevan untuk indikator ini sebelum memilih skenario. Angka perbandingan menunjukkan perubahan dalam kondisi yang disimulasikan.";
+  if (limitation) {
+    consideration = `Sebelum memakai hasil ini, periksa apakah batas model berikut dapat mengubah perbandingan. “${limitation}”`;
+  } else if (assumption) {
+    consideration = `Periksa apakah asumsi ini berlaku pada kondisi pelaksanaan. “${assumption}”`;
+  }
+
+  return { comparison, consideration };
+}
